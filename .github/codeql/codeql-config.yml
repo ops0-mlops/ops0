@@ -1,4 +1,4 @@
-```yaml
+
 # CodeQL Configuration for ops0
 # This file customizes the CodeQL analysis for better security scanning
 # Learn more: https://docs.github.com/en/code-security/code-scanning/automatically-scanning-your-code-for-vulnerabilities-and-errors/customizing-code-scanning
@@ -277,4 +277,3 @@ ml-security-extended:
     - "step-isolation"
     - "data-flow-validation"
     - "execution-sandboxing"
-```

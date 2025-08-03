@@ -1,4 +1,3 @@
-```yaml
 name: ✨ Feature Request
 description: Suggest a new feature or enhancement for ops0
 title: "[Feature]: "
@@ -221,4 +220,3 @@ body:
           required: true
         - label: "I understand this may not be implemented immediately"
           required: true
-```
