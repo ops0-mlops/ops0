@@ -1,255 +1,283 @@
 """
-ops0 Function Analyzer - AST-based analysis of Python functions.
+ops0 Function Analyzer
 
-This is the magic that makes ops0 understand your code automatically.
+AST-based analysis of Python functions to extract pipeline metadata.
+Automatically detects dependencies, inputs, outputs, and serialization needs.
 """
 
 import ast
 import inspect
 import hashlib
-from typing import Set, Dict, Any, Callable, Type, List, Optional
-import logging
+from typing import Dict, List, Set, Any, Optional, Callable, Tuple
+from dataclasses import dataclass
 
-logger = logging.getLogger(__name__)
+from .exceptions import StepError, ValidationError
+
+
+@dataclass
+class FunctionSignature:
+    """Represents a function's input/output signature"""
+    name: str
+    parameters: Dict[str, type]
+    return_type: Optional[type]
+    defaults: Dict[str, Any]
+
+    def __str__(self):
+        params = []
+        for name, param_type in self.parameters.items():
+            type_str = getattr(param_type, '__name__', str(param_type))
+            if name in self.defaults:
+                params.append(f"{name}: {type_str} = {self.defaults[name]}")
+            else:
+                params.append(f"{name}: {type_str}")
+
+        return_str = ""
+        if self.return_type:
+            return_type_str = getattr(self.return_type, '__name__', str(self.return_type))
+            return_str = f" -> {return_type_str}"
+
+        return f"{self.name}({', '.join(params)}){return_str}"
+
+
+@dataclass
+class StorageDependency:
+    """Represents a storage dependency found in the function"""
+    key: str
+    operation: str  # 'load' or 'save'
+    line_number: int
+    variable_name: Optional[str] = None
+
+
+class StorageCallVisitor(ast.NodeVisitor):
+    """AST visitor to find ops0.storage calls"""
+
+    def __init__(self):
+        self.dependencies: List[StorageDependency] = []
+        self.current_line = 0
+
+    def visit_Call(self, node: ast.Call):
+        """Visit function calls to detect storage operations"""
+        self.current_line = node.lineno
+
+        # Look for ops0.storage.load() or ops0.storage.save()
+        if self._is_storage_call(node):
+            operation, key_value = self._extract_storage_operation(node)
+            if operation and key_value:
+                # Try to get variable name for load operations
+                var_name = None
+                if operation == 'load' and hasattr(node, 'parent_assign'):
+                    var_name = self._get_assigned_variable(node)
+
+                self.dependencies.append(StorageDependency(
+                    key=key_value,
+                    operation=operation,
+                    line_number=self.current_line,
+                    variable_name=var_name
+                ))
+
+        self.generic_visit(node)
+
+    def _is_storage_call(self, node: ast.Call) -> bool:
+        """Check if this is a storage operation call"""
+        # Pattern: ops0.storage.load() or storage.load()
+        if isinstance(node.func, ast.Attribute):
+            if isinstance(node.func.value, ast.Attribute):
+                # ops0.storage.load
+                if (isinstance(node.func.value.value, ast.Name) and
+                    node.func.value.value.id == 'ops0' and
+                    node.func.value.attr == 'storage'):
+                    return node.func.attr in ['load', 'save']
+            elif isinstance(node.func.value, ast.Name):
+                # storage.load (after import)
+                if (node.func.value.id == 'storage'):
+                    return node.func.attr in ['load', 'save']
+        return False
+
+    def _extract_storage_operation(self, node: ast.Call) -> Tuple[Optional[str], Optional[str]]:
+        """Extract operation type and key from storage call"""
+        operation = node.func.attr
+
+        # Get the key (first argument)
+        if node.args and len(node.args) > 0:
+            key_arg = node.args[0]
+            if isinstance(key_arg, ast.Str):
+                return operation, key_arg.s
+            elif isinstance(key_arg, ast.Constant) and isinstance(key_arg.value, str):
+                return operation, key_arg.value
+
+        return operation, None
+
+    def _get_assigned_variable(self, node: ast.Call) -> Optional[str]:
+        """Get the variable name if this call is part of an assignment"""
+        # This would need parent tracking - simplified for now
+        return None
 
 
 class FunctionAnalyzer:
-    """
-    Analyzes Python functions using AST to extract dependencies and metadata.
-
-    This is the magic that makes ops0 understand your code automatically.
-    """
+    """Analyzes Python functions to extract ops0 metadata"""
 
     def __init__(self, func: Callable):
         self.func = func
+        self.source_code = self._get_source_code()
+        self.ast_tree = self._parse_ast()
+        self._signature = None
+        self._dependencies = None
+        self._source_hash = None
+
+    def _get_source_code(self) -> str:
+        """Get the source code of the function"""
         try:
-            self.source = inspect.getsource(func)
-            self.tree = ast.parse(self.source)
-            self.signature = inspect.signature(func)
-        except (OSError, TypeError) as e:
-            logger.warning(f"Could not analyze function {func.__name__}: {e}")
-            self.source = ""
-            self.tree = ast.Module(body=[], type_ignores=[])
-            self.signature = None
+            return inspect.getsource(self.func)
+        except OSError as e:
+            raise StepError(
+                f"Could not retrieve source code for function '{self.func.__name__}'",
+                step_name=self.func.__name__,
+                context={"error": str(e)}
+            )
 
-    def get_dependencies(self) -> Set[str]:
-        """
-        Extract ops0.storage.load() calls to understand data dependencies.
+    def _parse_ast(self) -> ast.AST:
+        """Parse the function source code into an AST"""
+        try:
+            return ast.parse(self.source_code)
+        except SyntaxError as e:
+            raise StepError(
+                f"Syntax error in function '{self.func.__name__}'",
+                step_name=self.func.__name__,
+                context={"error": str(e), "line": e.lineno}
+            )
 
-        Returns:
-            Set of storage keys this function depends on
-        """
-        dependencies = set()
+    def get_input_signature(self) -> FunctionSignature:
+        """Extract the function's input signature"""
+        if self._signature is None:
+            self._signature = self._analyze_signature()
+        return self._signature
 
-        class DependencyVisitor(ast.NodeVisitor):
-            def visit_Call(self, node):
-                # Look for storage.load("key") patterns
-                if self._is_storage_load(node):
-                    key = self._extract_string_arg(node)
-                    if key:
-                        dependencies.add(key)
+    def get_output_signature(self) -> Optional[type]:
+        """Extract the function's return type"""
+        signature = inspect.signature(self.func)
+        return signature.return_annotation if signature.return_annotation != inspect.Signature.empty else None
 
-                # Look for ops0.storage.load("key") patterns
-                elif self._is_ops0_storage_load(node):
-                    key = self._extract_string_arg(node)
-                    if key:
-                        dependencies.add(key)
-
-                self.generic_visit(node)
-
-            def _is_storage_load(self, node: ast.Call) -> bool:
-                """Check if call is storage.load()"""
-                return (isinstance(node.func, ast.Attribute) and
-                        isinstance(node.func.value, ast.Name) and
-                        node.func.value.id == "storage" and
-                        node.func.attr == "load")
-
-            def _is_ops0_storage_load(self, node: ast.Call) -> bool:
-                """Check if call is ops0.storage.load()"""
-                return (isinstance(node.func, ast.Attribute) and
-                        isinstance(node.func.value, ast.Attribute) and
-                        isinstance(node.func.value.value, ast.Name) and
-                        node.func.value.value.id == "ops0" and
-                        node.func.value.attr == "storage" and
-                        node.func.attr == "load")
-
-            def _extract_string_arg(self, node: ast.Call) -> Optional[str]:
-                """Extract string argument from function call"""
-                if node.args:
-                    arg = node.args[0]
-                    if isinstance(arg, ast.Str):  # Python < 3.8
-                        return arg.s
-                    elif isinstance(arg, ast.Constant) and isinstance(arg.value, str):  # Python >= 3.8
-                        return arg.value
-                return None
-
-        visitor = DependencyVisitor()
-        visitor.visit(self.tree)
-        return dependencies
-
-    def get_input_signature(self) -> Dict[str, Any]:
-        """Extract function parameters with type hints"""
-        inputs = {}
-        if not self.signature:
-            return inputs
-
-        for param_name, param in self.signature.parameters.items():
-            param_type = param.annotation if param.annotation != inspect.Parameter.empty else Any
-            default = param.default if param.default != inspect.Parameter.empty else None
-            inputs[param_name] = {
-                "type": param_type,
-                "default": default,
-                "kind": param.kind.name
-            }
-        return inputs
-
-    def get_output_signature(self) -> Type:
-        """Extract return type hint"""
-        if not self.signature:
-            return Any
-        return_annotation = self.signature.return_annotation
-        return return_annotation if return_annotation != inspect.Signature.empty else Any
+    def get_dependencies(self) -> List[StorageDependency]:
+        """Extract storage dependencies from the function"""
+        if self._dependencies is None:
+            self._dependencies = self._analyze_dependencies()
+        return self._dependencies
 
     def get_source_hash(self) -> str:
-        """Generate hash of source code for reproducibility"""
-        if not self.source:
-            return "unknown"
-        return hashlib.sha256(self.source.encode()).hexdigest()[:12]
+        """Get a hash of the function source for caching"""
+        if self._source_hash is None:
+            self._source_hash = hashlib.sha256(self.source_code.encode()).hexdigest()[:16]
+        return self._source_hash
 
-    def get_storage_saves(self) -> Set[str]:
-        """Extract ops0.storage.save() calls to understand data outputs"""
-        saves = set()
+    def _analyze_signature(self) -> FunctionSignature:
+        """Analyze the function signature"""
+        signature = inspect.signature(self.func)
 
-        class SaveVisitor(ast.NodeVisitor):
-            def visit_Call(self, node):
-                # Look for storage.save("key", data) patterns
-                if self._is_storage_save(node):
-                    key = self._extract_string_arg(node)
-                    if key:
-                        saves.add(key)
+        parameters = {}
+        defaults = {}
 
-                # Look for ops0.storage.save("key", data) patterns
-                elif self._is_ops0_storage_save(node):
-                    key = self._extract_string_arg(node)
-                    if key:
-                        saves.add(key)
+        for param_name, param in signature.parameters.items():
+            # Get parameter type
+            param_type = param.annotation if param.annotation != inspect.Parameter.empty else Any
+            parameters[param_name] = param_type
 
-                self.generic_visit(node)
+            # Get default value
+            if param.default != inspect.Parameter.empty:
+                defaults[param_name] = param.default
 
-            def _is_storage_save(self, node: ast.Call) -> bool:
-                """Check if call is storage.save()"""
-                return (isinstance(node.func, ast.Attribute) and
-                        isinstance(node.func.value, ast.Name) and
-                        node.func.value.id == "storage" and
-                        node.func.attr == "save")
-
-            def _is_ops0_storage_save(self, node: ast.Call) -> bool:
-                """Check if call is ops0.storage.save()"""
-                return (isinstance(node.func, ast.Attribute) and
-                        isinstance(node.func.value, ast.Attribute) and
-                        isinstance(node.func.value.value, ast.Name) and
-                        node.func.value.value.id == "ops0" and
-                        node.func.value.attr == "storage" and
-                        node.func.attr == "save")
-
-            def _extract_string_arg(self, node: ast.Call) -> Optional[str]:
-                """Extract string argument from function call"""
-                if node.args:
-                    arg = node.args[0]
-                    if isinstance(arg, ast.Str):  # Python < 3.8
-                        return arg.s
-                    elif isinstance(arg, ast.Constant) and isinstance(arg.value, str):  # Python >= 3.8
-                        return arg.value
-                return None
-
-        visitor = SaveVisitor()
-        visitor.visit(self.tree)
-        return saves
-
-    def get_imported_modules(self) -> Set[str]:
-        """Extract imported modules"""
-        imports = set()
-
-        class ImportVisitor(ast.NodeVisitor):
-            def visit_Import(self, node):
-                for alias in node.names:
-                    imports.add(alias.name)
-
-            def visit_ImportFrom(self, node):
-                if node.module:
-                    imports.add(node.module)
-
-        visitor = ImportVisitor()
-        visitor.visit(self.tree)
-        return imports
-
-    def get_function_calls(self) -> List[str]:
-        """Extract function calls made within the function"""
-        calls = []
-
-        class CallVisitor(ast.NodeVisitor):
-            def visit_Call(self, node):
-                if isinstance(node.func, ast.Name):
-                    calls.append(node.func.id)
-                elif isinstance(node.func, ast.Attribute):
-                    if isinstance(node.func.value, ast.Name):
-                        calls.append(f"{node.func.value.id}.{node.func.attr}")
-                self.generic_visit(node)
-
-        visitor = CallVisitor()
-        visitor.visit(self.tree)
-        return calls
-
-    def has_ml_frameworks(self) -> bool:
-        """Check if function uses common ML frameworks"""
-        ml_patterns = [
-            "sklearn", "torch", "tensorflow", "tf", "keras",
-            "pandas", "numpy", "scipy", "xgboost", "lightgbm"
-        ]
-
-        imports = self.get_imported_modules()
-        calls = self.get_function_calls()
-
-        return any(
-            pattern in " ".join(imports) or pattern in " ".join(calls)
-            for pattern in ml_patterns
+        return FunctionSignature(
+            name=self.func.__name__,
+            parameters=parameters,
+            return_type=self.get_output_signature(),
+            defaults=defaults
         )
 
-    def estimate_complexity(self) -> str:
-        """Estimate function complexity based on AST analysis"""
-        if not self.tree:
-            return "unknown"
+    def _analyze_dependencies(self) -> List[StorageDependency]:
+        """Analyze storage dependencies using AST"""
+        visitor = StorageCallVisitor()
+        visitor.visit(self.ast_tree)
+        return visitor.dependencies
 
-        complexity_score = 0
+    def validate_step_function(self) -> bool:
+        """Validate that the function can be used as an ops0 step"""
+        try:
+            # Check if function is callable
+            if not callable(self.func):
+                raise ValidationError("Step must be a callable function")
 
-        for node in ast.walk(self.tree):
-            if isinstance(node, (ast.For, ast.While)):
-                complexity_score += 2
-            elif isinstance(node, (ast.If, ast.Try)):
-                complexity_score += 1
-            elif isinstance(node, ast.FunctionDef):
-                complexity_score += 1
+            # Check if we can analyze the function
+            signature = self.get_input_signature()
+            dependencies = self.get_dependencies()
 
-        if complexity_score <= 5:
-            return "low"
-        elif complexity_score <= 10:
-            return "medium"
-        else:
-            return "high"
+            # Validate no conflicting parameter names with storage keys
+            storage_keys = {dep.key for dep in dependencies if dep.operation == 'load'}
+            param_names = set(signature.parameters.keys())
 
-    def get_metadata(self) -> Dict[str, Any]:
-        """Get comprehensive function metadata"""
-        return {
-            "name": self.func.__name__,
-            "module": self.func.__module__ if hasattr(self.func, "__module__") else "unknown",
-            "dependencies": list(self.get_dependencies()),
-            "storage_saves": list(self.get_storage_saves()),
-            "inputs": self.get_input_signature(),
-            "output_type": str(self.get_output_signature()),
-            "source_hash": self.get_source_hash(),
-            "imports": list(self.get_imported_modules()),
-            "function_calls": self.get_function_calls(),
-            "has_ml_frameworks": self.has_ml_frameworks(),
-            "complexity": self.estimate_complexity(),
-            "docstring": self.func.__doc__,
+            conflicts = storage_keys.intersection(param_names)
+            if conflicts:
+                raise ValidationError(
+                    f"Parameter names conflict with storage keys: {conflicts}",
+                    context={"conflicts": list(conflicts)}
+                )
+
+            return True
+
+        except Exception as e:
+            if isinstance(e, ValidationError):
+                raise
+            raise ValidationError(f"Step validation failed: {str(e)}")
+
+    def get_resource_requirements(self) -> Dict[str, Any]:
+        """Analyze function to determine resource requirements"""
+        requirements = {
+            "cpu": "100m",  # Default CPU
+            "memory": "128Mi",  # Default memory
+            "gpu": False,
+            "disk_space": "1Gi"
         }
+
+        # Simple heuristics based on function analysis
+        source_lower = self.source_code.lower()
+
+        # Check for GPU indicators
+        gpu_indicators = ['torch', 'tensorflow', 'gpu', 'cuda', 'cupy']
+        if any(indicator in source_lower for indicator in gpu_indicators):
+            requirements["gpu"] = True
+            requirements["memory"] = "2Gi"  # More memory for GPU workloads
+
+        # Check for data processing indicators
+        data_indicators = ['pandas', 'numpy', 'scipy', 'sklearn']
+        if any(indicator in source_lower for indicator in data_indicators):
+            requirements["memory"] = "512Mi"  # More memory for data processing
+
+        # Check for ML model indicators
+        ml_indicators = ['model', 'predict', 'train', 'fit']
+        if any(indicator in source_lower for indicator in ml_indicators):
+            requirements["cpu"] = "500m"  # More CPU for ML
+
+        return requirements
+
+    def get_serialization_hints(self) -> Dict[str, str]:
+        """Suggest serialization formats based on function analysis"""
+        hints = {}
+
+        # Analyze return type and code to suggest serialization
+        return_type = self.get_output_signature()
+        source_lower = self.source_code.lower()
+
+        # Common patterns
+        if 'pandas' in source_lower or 'dataframe' in source_lower:
+            hints['default'] = 'parquet'
+        elif 'numpy' in source_lower or 'array' in source_lower:
+            hints['default'] = 'numpy'
+        elif 'torch' in source_lower or 'tensor' in source_lower:
+            hints['default'] = 'torch'
+        elif return_type and hasattr(return_type, '__name__'):
+            if 'dict' in return_type.__name__.lower():
+                hints['default'] = 'json'
+            else:
+                hints['default'] = 'pickle'
+        else:
+            hints['default'] = 'pickle'
+
+        return hints

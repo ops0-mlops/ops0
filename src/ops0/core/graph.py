@@ -1,344 +1,362 @@
 """
-ops0 Pipeline Graph - Builds and manages execution graphs for pipelines.
+ops0 Pipeline Graph
 
-Automatically detects dependencies through AST analysis and creates
-optimal execution plans with topological sorting.
+Builds and manages the execution graph of pipeline steps.
+Automatically resolves dependencies and enables parallel execution.
 """
 
 import threading
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Set, Optional, Any, Callable
+from dataclasses import dataclass, field
 from collections import defaultdict, deque
 import logging
 
-from .analyzer import FunctionAnalyzer
-from .exceptions import DependencyError, PipelineError
+from .analyzer import FunctionAnalyzer, StorageDependency
+from .exceptions import DependencyError, PipelineError, ValidationError
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass
 class StepNode:
-    """Represents a single step in the pipeline"""
+    """Represents a single step in the pipeline graph"""
+    name: str
+    func: Callable
+    analyzer: FunctionAnalyzer
+    dependencies: List[str] = field(default_factory=list)
+    dependents: List[str] = field(default_factory=list)
+    status: str = "pending"  # pending, running, completed, failed
+    result: Any = None
+    error: Optional[Exception] = None
+    execution_time: Optional[float] = None
 
-    def __init__(self, metadata):
-        self.metadata = metadata
-        self.name = metadata.name
-        self.func = metadata.func
-        self.dependencies = metadata.dependencies
-        self.dependents: Set[str] = set()
-        self.executed = False
-        self.result = None
-        self.execution_time = 0.0
+    def __post_init__(self):
+        if not self.analyzer:
+            self.analyzer = FunctionAnalyzer(self.func)
+
+    @property
+    def storage_dependencies(self) -> List[StorageDependency]:
+        """Get storage dependencies for this step"""
+        return self.analyzer.get_dependencies()
+
+    @property
+    def input_signature(self):
+        """Get input signature for this step"""
+        return self.analyzer.get_input_signature()
+
+    def can_execute(self, completed_steps: Set[str]) -> bool:
+        """Check if this step can be executed given completed steps"""
+        return all(dep in completed_steps for dep in self.dependencies)
 
     def __repr__(self):
-        return f"StepNode(name='{self.name}', deps={self.dependencies})"
-
-    def add_dependent(self, step_name: str):
-        """Add a dependent step"""
-        self.dependents.add(step_name)
-
-    def is_ready(self, completed_steps: Set[str]) -> bool:
-        """Check if step is ready to execute"""
-        return self.dependencies.issubset(completed_steps)
-
-    def reset(self):
-        """Reset execution state"""
-        self.executed = False
-        self.result = None
-        self.execution_time = 0.0
+        return f"StepNode(name='{self.name}', status='{self.status}', deps={self.dependencies})"
 
 
 class PipelineGraph:
-    """
-    Builds and manages the execution graph for a pipeline.
+    """Manages the pipeline execution graph"""
 
-    Automatically detects dependencies through AST analysis and creates
-    an optimal execution plan.
-    """
-
+    # Thread-local storage for current pipeline context
     _current_pipeline = threading.local()
 
-    def __init__(self, name: str):
+    def __init__(self, name: str = "default-pipeline"):
         self.name = name
         self.steps: Dict[str, StepNode] = {}
-        self.storage_providers: Dict[str, str] = {}  # storage_key -> step_name
-        self._execution_order: Optional[List[List[str]]] = None
+        self.execution_order: List[str] = []
         self._validated = False
+        self._dependency_graph_built = False
 
-    def __enter__(self):
-        """Context manager entry"""
-        self._current_pipeline.value = self
-        logger.debug(f"Entered pipeline context: {self.name}")
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit"""
-        if hasattr(self._current_pipeline, 'value'):
-            del self._current_pipeline.value
-        logger.debug(f"Exited pipeline context: {self.name}")
-
-    @classmethod
-    def get_current(cls) -> Optional['PipelineGraph']:
-        """Get the current pipeline context"""
-        return getattr(cls._current_pipeline, 'value', None)
-
-    def add_step(self, step_node: StepNode):
+    def add_step(self, step_node: StepNode) -> None:
         """Add a step to the pipeline"""
         if step_node.name in self.steps:
             logger.warning(f"Step '{step_node.name}' already exists, replacing")
 
         self.steps[step_node.name] = step_node
-
-        # Register what this step provides to storage
-        analyzer = FunctionAnalyzer(step_node.func)
-        for storage_key in analyzer.get_storage_saves():
-            if storage_key in self.storage_providers:
-                existing_provider = self.storage_providers[storage_key]
-                logger.warning(
-                    f"Storage key '{storage_key}' provided by both "
-                    f"'{existing_provider}' and '{step_node.name}'"
-                )
-            self.storage_providers[storage_key] = step_node.name
-
-        # Invalidate cached execution order
-        self._execution_order = None
         self._validated = False
+        self._dependency_graph_built = False
 
-        logger.debug(f"Added step: {step_node.name}")
+        logger.debug(f"Added step '{step_node.name}' to pipeline '{self.name}'")
 
-    def remove_step(self, step_name: str) -> bool:
-        """Remove a step from the pipeline"""
-        if step_name not in self.steps:
-            return False
+    def build_dependency_graph(self) -> None:
+        """Build the dependency graph between steps"""
+        if self._dependency_graph_built:
+            return
 
-        # Remove from steps
-        step_node = self.steps.pop(step_name)
+        # Reset dependencies
+        for step in self.steps.values():
+            step.dependencies = []
+            step.dependents = []
 
-        # Remove from storage providers
-        to_remove = [k for k, v in self.storage_providers.items() if v == step_name]
-        for key in to_remove:
-            del self.storage_providers[key]
+        # Build dependencies based on storage operations
+        for step_name, step in self.steps.items():
+            storage_deps = step.storage_dependencies
 
-        # Update dependencies of other steps
-        for other_step in self.steps.values():
-            other_step.dependents.discard(step_name)
+            for dep in storage_deps:
+                if dep.operation == 'load':
+                    # Find which step saves this key
+                    producer_step = self._find_producer_step(dep.key, step_name)
+                    if producer_step:
+                        step.dependencies.append(producer_step)
+                        self.steps[producer_step].dependents.append(step_name)
 
-        # Invalidate cached execution order
-        self._execution_order = None
-        self._validated = False
+        # Also consider function parameter dependencies
+        self._analyze_parameter_dependencies()
 
-        logger.debug(f"Removed step: {step_name}")
-        return True
+        self._dependency_graph_built = True
+        logger.debug(f"Built dependency graph for pipeline '{self.name}'")
 
-    def get_step(self, step_name: str) -> Optional[StepNode]:
-        """Get a step by name"""
-        return self.steps.get(step_name)
+    def _find_producer_step(self, key: str, consumer_step: str) -> Optional[str]:
+        """Find which step produces a given storage key"""
+        for step_name, step in self.steps.items():
+            if step_name == consumer_step:
+                continue
 
-    def list_steps(self) -> List[str]:
-        """List all step names"""
-        return list(self.steps.keys())
+            storage_deps = step.storage_dependencies
+            for dep in storage_deps:
+                if dep.operation == 'save' and dep.key == key:
+                    return step_name
 
-    def validate(self) -> List[str]:
-        """
-        Validate the pipeline structure.
+        return None
 
-        Returns:
-            List of validation errors
-        """
-        errors = []
+    def _analyze_parameter_dependencies(self) -> None:
+        """Analyze function parameter names to infer dependencies"""
+        # This is a simplified heuristic - in practice, we'd use more sophisticated analysis
+        step_names = set(self.steps.keys())
 
-        # Check for missing dependencies
-        for step_name, step_node in self.steps.items():
-            for dep in step_node.dependencies:
-                if dep not in self.storage_providers:
-                    errors.append(
-                        f"Step '{step_name}' depends on '{dep}' but no step provides it"
-                    )
+        for step_name, step in self.steps.items():
+            signature = step.input_signature
 
-        # Check for cycles
-        try:
-            self.build_execution_order()
-        except DependencyError as e:
-            errors.append(str(e))
+            for param_name in signature.parameters:
+                # If parameter name matches another step name, create dependency
+                if param_name in step_names and param_name != step_name:
+                    if param_name not in step.dependencies:
+                        step.dependencies.append(param_name)
+                        self.steps[param_name].dependents.append(step_name)
 
-        self._validated = len(errors) == 0
-        return errors
-
-    def build_execution_order(self) -> List[List[str]]:
-        """
-        Build optimal execution order using topological sort.
-
-        Returns:
-            List of lists, where each inner list contains steps that can
-            execute in parallel.
-        """
-        if self._execution_order is not None:
-            return self._execution_order
+    def validate(self) -> bool:
+        """Validate the pipeline graph"""
+        if self._validated:
+            return True
 
         if not self.steps:
-            self._execution_order = []
-            return self._execution_order
+            raise ValidationError("Pipeline has no steps")
 
-        # Build dependency graph based on storage dependencies
-        dependency_graph = defaultdict(set)
-        reverse_dependency_graph = defaultdict(set)
+        # Build dependency graph first
+        self.build_dependency_graph()
 
-        for step_name, step_node in self.steps.items():
-            # Add dependencies based on storage keys
-            for storage_key in step_node.dependencies:
-                if storage_key in self.storage_providers:
-                    provider = self.storage_providers[storage_key]
-                    if provider != step_name:  # Avoid self-dependency
-                        dependency_graph[step_name].add(provider)
-                        reverse_dependency_graph[provider].add(step_name)
-                        # Update step node dependents
-                        if provider in self.steps:
-                            self.steps[provider].add_dependent(step_name)
+        # Check for circular dependencies
+        self._check_circular_dependencies()
 
-        # Topological sort with Kahn's algorithm
-        execution_order = []
-        in_degree = defaultdict(int)
+        # Validate individual steps
+        for step in self.steps.values():
+            step.analyzer.validate_step_function()
 
-        # Calculate in-degrees
+        # Validate storage consistency
+        self._validate_storage_consistency()
+
+        self._validated = True
+        logger.info(f"Pipeline '{self.name}' validated successfully")
+        return True
+
+    def _check_circular_dependencies(self) -> None:
+        """Check for circular dependencies in the graph"""
+        visited = set()
+        rec_stack = set()
+
+        def has_cycle(step_name: str) -> bool:
+            visited.add(step_name)
+            rec_stack.add(step_name)
+
+            for dependent in self.steps[step_name].dependents:
+                if dependent not in visited:
+                    if has_cycle(dependent):
+                        return True
+                elif dependent in rec_stack:
+                    return True
+
+            rec_stack.remove(step_name)
+            return False
+
         for step_name in self.steps:
-            in_degree[step_name] = len(dependency_graph[step_name])
+            if step_name not in visited:
+                if has_cycle(step_name):
+                    # Find the actual cycle for better error message
+                    cycle = self._find_cycle()
+                    raise DependencyError(
+                        f"Circular dependency detected in pipeline '{self.name}'",
+                        dependency=" -> ".join(cycle)
+                    )
 
-        # Process steps level by level
-        while True:
-            # Find all steps with in-degree 0 (ready to execute)
-            ready_steps = [
-                step_name for step_name in self.steps
-                if in_degree[step_name] == 0 and step_name not in [
-                    s for batch in execution_order for s in batch
-                ]
-            ]
+    def _find_cycle(self) -> List[str]:
+        """Find an actual cycle in the dependency graph"""
+        # Simplified cycle detection - returns first found cycle
+        visited = set()
 
-            if not ready_steps:
-                break
+        def dfs(step_name: str, path: List[str]) -> Optional[List[str]]:
+            if step_name in path:
+                cycle_start = path.index(step_name)
+                return path[cycle_start:] + [step_name]
 
-            execution_order.append(ready_steps)
+            if step_name in visited:
+                return None
 
-            # Update in-degrees
-            for step_name in ready_steps:
-                for dependent in reverse_dependency_graph[step_name]:
-                    in_degree[dependent] -= 1
+            visited.add(step_name)
 
-        # Check for cycles
-        total_steps_in_order = sum(len(batch) for batch in execution_order)
-        if total_steps_in_order != len(self.steps):
-            remaining_steps = set(self.steps.keys()) - {
-                s for batch in execution_order for s in batch
-            }
-            raise DependencyError(
-                f"Circular dependency detected involving steps: {remaining_steps}"
+            for dependent in self.steps[step_name].dependents:
+                result = dfs(dependent, path + [step_name])
+                if result:
+                    return result
+
+            return None
+
+        for step_name in self.steps:
+            result = dfs(step_name, [])
+            if result:
+                return result
+
+        return []
+
+    def _validate_storage_consistency(self) -> None:
+        """Validate storage key consistency across steps"""
+        produced_keys = set()
+        consumed_keys = set()
+
+        for step in self.steps.values():
+            for dep in step.storage_dependencies:
+                if dep.operation == 'save':
+                    if dep.key in produced_keys:
+                        logger.warning(f"Storage key '{dep.key}' is produced by multiple steps")
+                    produced_keys.add(dep.key)
+                elif dep.operation == 'load':
+                    consumed_keys.add(dep.key)
+
+        # Check for consumed keys that are never produced
+        missing_keys = consumed_keys - produced_keys
+        if missing_keys:
+            raise ValidationError(
+                f"Storage keys consumed but never produced: {missing_keys}",
+                context={"missing_keys": list(missing_keys)}
             )
 
-        self._execution_order = execution_order
-        logger.debug(f"Built execution order: {execution_order}")
-        return execution_order
+    def get_execution_order(self) -> List[str]:
+        """Get the topological order for step execution"""
+        if not self._validated:
+            self.validate()
 
-    def get_step_dependencies(self, step_name: str) -> Set[str]:
-        """Get all direct and indirect dependencies of a step"""
-        if step_name not in self.steps:
-            return set()
+        if self.execution_order:
+            return self.execution_order
 
-        visited = set()
-        to_visit = deque([step_name])
-        dependencies = set()
+        # Topological sort using Kahn's algorithm
+        in_degree = {step_name: len(step.dependencies) for step_name, step in self.steps.items()}
+        queue = deque([step_name for step_name, degree in in_degree.items() if degree == 0])
+        result = []
 
-        while to_visit:
-            current = to_visit.popleft()
-            if current in visited:
-                continue
-            visited.add(current)
+        while queue:
+            step_name = queue.popleft()
+            result.append(step_name)
 
-            if current in self.steps:
-                step_deps = self.steps[current].dependencies
-                for dep in step_deps:
-                    if dep in self.storage_providers:
-                        provider = self.storage_providers[dep]
-                        if provider not in visited:
-                            dependencies.add(provider)
-                            to_visit.append(provider)
+            for dependent in self.steps[step_name].dependents:
+                in_degree[dependent] -= 1
+                if in_degree[dependent] == 0:
+                    queue.append(dependent)
 
-        return dependencies
+        if len(result) != len(self.steps):
+            raise DependencyError("Could not resolve all dependencies (possible cycle)")
 
-    def get_step_dependents(self, step_name: str) -> Set[str]:
-        """Get all direct and indirect dependents of a step"""
-        if step_name not in self.steps:
-            return set()
+        self.execution_order = result
+        return result
 
-        visited = set()
-        to_visit = deque([step_name])
-        dependents = set()
+    def get_parallel_groups(self) -> List[List[str]]:
+        """Get groups of steps that can be executed in parallel"""
+        execution_order = self.get_execution_order()
+        groups = []
+        remaining_steps = set(execution_order)
 
-        while to_visit:
-            current = to_visit.popleft()
-            if current in visited:
-                continue
-            visited.add(current)
+        while remaining_steps:
+            # Find all steps that can execute now (no pending dependencies)
+            executable_steps = []
+            for step_name in remaining_steps:
+                step = self.steps[step_name]
+                completed_deps = set(execution_order) - remaining_steps
+                if step.can_execute(completed_deps):
+                    executable_steps.append(step_name)
 
-            if current in self.steps:
-                step_dependents = self.steps[current].dependents
-                for dependent in step_dependents:
-                    if dependent not in visited:
-                        dependents.add(dependent)
-                        to_visit.append(dependent)
+            if not executable_steps:
+                raise DependencyError("No executable steps found - possible dependency issue")
 
-        return dependents
+            groups.append(executable_steps)
+            remaining_steps -= set(executable_steps)
 
-    def reset_execution_state(self):
-        """Reset execution state for all steps"""
+        return groups
+
+    def get_step_metadata(self) -> Dict[str, Dict[str, Any]]:
+        """Get metadata for all steps in the pipeline"""
+        metadata = {}
+
+        for step_name, step in self.steps.items():
+            metadata[step_name] = {
+                "dependencies": step.dependencies,
+                "dependents": step.dependents,
+                "storage_dependencies": [
+                    {"key": dep.key, "operation": dep.operation, "line": dep.line_number}
+                    for dep in step.storage_dependencies
+                ],
+                "signature": str(step.input_signature),
+                "resource_requirements": step.analyzer.get_resource_requirements(),
+                "serialization_hints": step.analyzer.get_serialization_hints(),
+            }
+
+        return metadata
+
+    def reset_execution_state(self) -> None:
+        """Reset all steps to pending state"""
         for step in self.steps.values():
-            step.reset()
-        logger.debug("Reset execution state for all steps")
+            step.status = "pending"
+            step.result = None
+            step.error = None
+            step.execution_time = None
 
-    def get_execution_stats(self) -> Dict[str, any]:
-        """Get execution statistics"""
-        total_steps = len(self.steps)
-        completed_steps = sum(1 for step in self.steps.values() if step.executed)
-        total_time = sum(step.execution_time for step in self.steps.values())
+    # Context manager support
+    def __enter__(self):
+        """Enter pipeline context"""
+        PipelineGraph._current_pipeline.value = self
+        return self
 
-        return {
-            "total_steps": total_steps,
-            "completed_steps": completed_steps,
-            "completion_percentage": (completed_steps / total_steps * 100) if total_steps > 0 else 0,
-            "total_execution_time": total_time,
-            "average_step_time": total_time / completed_steps if completed_steps > 0 else 0,
-        }
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Exit pipeline context"""
+        if hasattr(PipelineGraph._current_pipeline, 'value'):
+            delattr(PipelineGraph._current_pipeline, 'value')
 
-    def to_dict(self) -> Dict[str, any]:
-        """Convert pipeline to dictionary representation"""
-        return {
-            "name": self.name,
-            "steps": {
-                name: {
-                    "name": step.name,
-                    "dependencies": list(step.dependencies),
-                    "dependents": list(step.dependents),
-                    "executed": step.executed,
-                }
-                for name, step in self.steps.items()
-            },
-            "storage_providers": self.storage_providers,
-            "execution_order": self._execution_order,
-            "validated": self._validated,
-        }
+    @classmethod
+    def get_current(cls) -> Optional['PipelineGraph']:
+        """Get the current pipeline from thread-local storage"""
+        return getattr(cls._current_pipeline, 'value', None)
 
-    def __len__(self):
-        return len(self.steps)
-
-    def __contains__(self, step_name: str):
-        return step_name in self.steps
-
-    def __iter__(self):
-        return iter(self.steps.values())
+    def __repr__(self):
+        return f"PipelineGraph(name='{self.name}', steps={len(self.steps)})"
 
 
+# Convenience function for getting current pipeline
 def get_current_pipeline() -> Optional[PipelineGraph]:
-    """Get the current pipeline context (alias for PipelineGraph.get_current)"""
+    """Get the current pipeline context"""
     return PipelineGraph.get_current()
 
 
-def create_pipeline(name: str) -> PipelineGraph:
-    """Create a new pipeline instance"""
-    return PipelineGraph(name)
+# Pipeline builder utility
+class PipelineBuilder:
+    """Helper class for building pipelines programmatically"""
+
+    def __init__(self, name: str = "pipeline"):
+        self.pipeline = PipelineGraph(name)
+
+    def add_step(self, func: Callable, name: str = None) -> 'PipelineBuilder':
+        """Add a step to the pipeline"""
+        step_name = name or func.__name__
+        analyzer = FunctionAnalyzer(func)
+        step_node = StepNode(step_name, func, analyzer)
+        self.pipeline.add_step(step_node)
+        return self
+
+    def build(self) -> PipelineGraph:
+        """Build and validate the pipeline"""
+        self.pipeline.validate()
+        return self.pipeline

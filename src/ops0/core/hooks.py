@@ -13,9 +13,6 @@ from datetime import datetime
 from enum import Enum
 from abc import ABC, abstractmethod
 
-from .exceptions import Ops0Error
-
-
 class HookEvent(Enum):
     """Standard hook events in ops0 lifecycle"""
 
