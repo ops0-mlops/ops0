@@ -1,0 +1,10 @@
+"""Package metadata and version information."""
+
+__version__ = "0.1.0"
+__title__ = "ops0"
+__description__ = "Python-Native ML Pipeline Orchestration"
+__author__ = "ops0 Team"
+__author_email__ = "hello@ops0.xyz"
+__license__ = "MIT"
+__url__ = "https://ops0.xyz"
+__repository__ = "https://github.com/ops0-mlops/ops0"
