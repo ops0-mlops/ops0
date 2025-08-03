@@ -1,0 +1,224 @@
+```yaml
+name: ✨ Feature Request
+description: Suggest a new feature or enhancement for ops0
+title: "[Feature]: "
+labels: ["enhancement", "needs-discussion"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to suggest a feature! 🚀
+        
+        Before submitting, please:
+        - Check [existing issues](https://github.com/ops0-mlops/ops0/issues) for similar requests
+        - Review our [roadmap](https://github.com/orgs/ops0-mlops/projects/1) to see if it's already planned
+        - Consider starting a [discussion](https://github.com/ops0-mlops/ops0/discussions) for complex features
+
+  - type: textarea
+    id: feature-summary
+    attributes:
+      label: 🎯 Feature Summary
+      description: A clear and concise description of the feature you'd like to see
+      placeholder: "I would like ops0 to support..."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: feature-category
+    attributes:
+      label: 📂 Feature Category
+      description: What category does this feature belong to?
+      options:
+        - "Core Framework (decorators, execution)"
+        - "Cloud Deployment"
+        - "Monitoring & Observability"
+        - "Storage & Data Management"
+        - "ML Framework Integration"
+        - "CLI & Developer Experience"
+        - "Documentation"
+        - "Performance & Optimization"
+        - "Security & Compliance"
+        - "Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem-statement
+    attributes:
+      label: 🤔 Problem Statement
+      description: |
+        What problem does this feature solve? What's the current pain point?
+        Help us understand the "why" behind your request.
+      placeholder: |
+        Currently, when I try to...
+        The problem is...
+        This makes it difficult to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: 💡 Proposed Solution
+      description: |
+        Describe the solution you'd like to see. 
+        How should this feature work? What would the API look like?
+      placeholder: |
+        I think ops0 should...
+        The API could look like...
+        This would work by...
+    validations:
+      required: true
+
+  - type: textarea
+    id: api-design
+    attributes:
+      label: 🛠️ API Design (Optional)
+      description: |
+        If you have ideas about how this feature should be used, show us!
+        What would the Python code look like?
+      placeholder: |
+        ```python
+        import ops0
+        
+        # Example of how the new feature might work
+        @ops0.step
+        @ops0.new_feature(param="value")
+        def my_step():
+            # Your proposed API usage
+            pass
+        ```
+      render: python
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 🔄 Alternatives Considered
+      description: |
+        Have you considered any alternative solutions or workarounds?
+        Are there other tools that solve this problem?
+      placeholder: |
+        I considered...
+        Alternative approaches...
+        Other tools like X do this by...
+    validations:
+      required: false
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: ⭐ Priority
+      description: How important is this feature to you?
+      options:
+        - "🔥 Critical - Blocking my work"
+        - "📈 High - Would significantly improve my workflow"
+        - "📊 Medium - Nice to have improvement"
+        - "🎁 Low - Cool idea for the future"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: urgency
+    attributes:
+      label: ⏰ Timeline
+      description: When would you like to see this feature?
+      options:
+        - "🚨 ASAP - Needed immediately"
+        - "🗓️ Next release - Within 1-2 months"
+        - "📅 Soon - Within 3-6 months"
+        - "🔮 Future - No specific timeline"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: use-cases
+    attributes:
+      label: 🎯 Use Cases
+      description: What are the main use cases for this feature? (Check all that apply)
+      options:
+        - label: "Data preprocessing and cleaning"
+        - label: "Model training and hyperparameter tuning"
+        - label: "Model serving and inference"
+        - label: "Real-time data processing"
+        - label: "Batch data processing"
+        - label: "A/B testing and experimentation"
+        - label: "Monitoring and alerting"
+        - label: "Cost optimization"
+        - label: "Multi-cloud deployment"
+        - label: "Team collaboration"
+        - label: "Compliance and governance"
+        - label: "Integration with existing tools"
+
+  - type: textarea
+    id: business-impact
+    attributes:
+      label: 📊 Business Impact
+      description: |
+        How would this feature impact your team or organization?
+        What value would it provide?
+      placeholder: |
+        This would help our team...
+        We could save X hours per week...
+        This would enable us to...
+    validations:
+      required: false
+
+  - type: textarea
+    id: success-metrics
+    attributes:
+      label: 📈 Success Metrics
+      description: |
+        How would you measure the success of this feature?
+        What would make this feature successful for you?
+      placeholder: |
+        I would consider this successful if...
+        This would be working well when...
+        Key metrics would be...
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: implementation-help
+    attributes:
+      label: 🤝 Implementation
+      description: Would you be interested in helping implement this feature?
+      options:
+        - label: "💡 I can help with design and requirements"
+        - label: "🧪 I can help with testing and feedback"
+        - label: "💻 I'm interested in contributing code"
+        - label: "📚 I can help with documentation"
+        - label: "🎯 I can provide use cases and examples"
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: 📝 Additional Context
+      description: |
+        Add any other context, mockups, links, or screenshots about the feature request here.
+        
+        - Links to relevant documentation
+        - Screenshots or mockups
+        - References to similar features in other tools
+        - Related discussions or issues
+      placeholder: Any additional information that would help us understand your request...
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: ✅ Checklist
+      description: Please confirm the following
+      options:
+        - label: "I have searched existing issues and discussions"
+          required: true
+        - label: "I have clearly described the problem this feature would solve"
+          required: true
+        - label: "I have provided a specific solution or approach"
+          required: true
+        - label: "I understand this may not be implemented immediately"
+          required: true
+```

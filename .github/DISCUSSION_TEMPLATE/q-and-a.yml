@@ -1,0 +1,64 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Got a question about ops0? Ask away! 🤔
+        
+        This is the best place for questions that don't fit into bug reports or feature requests.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: ❓ Your Question
+      description: What would you like to know?
+      placeholder: "How do I..."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: question-type
+    attributes:
+      label: 🏷️ Question Type
+      description: What type of question is this?
+      options:
+        - "How-to / Usage"
+        - "Best Practices"
+        - "Architecture / Design"
+        - "Troubleshooting"
+        - "Integration"
+        - "Performance"
+        - "Conceptual"
+        - "Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: 📋 Context
+      description: Provide context about your use case or situation
+      placeholder: "I'm trying to build a pipeline that..."
+    validations:
+      required: false
+
+  - type: textarea
+    id: attempted-solutions
+    attributes:
+      label: 🔍 What You've Tried
+      description: What have you already tried or researched?
+      placeholder: "I've looked at the docs for... / I tried..."
+    validations:
+      required: false
+
+  - type: dropdown
+    id: urgency
+    attributes:
+      label: ⏰ Urgency
+      description: How urgent is this question?
+      options:
+        - "Just curious"
+        - "Would help my project"
+        - "Blocking my work"
+        - "Time-sensitive"
+    validations:
+      required: false

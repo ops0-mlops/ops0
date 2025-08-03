@@ -1,0 +1,83 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Built something cool with ops0? Show it off! 🎉
+        
+        We love seeing what the community creates. Share your projects, pipelines, integrations, or anything ops0-related!
+
+  - type: textarea
+    id: project
+    attributes:
+      label: 🚀 Your Project
+      description: Tell us about what you built!
+      placeholder: "I built a real-time fraud detection pipeline using ops0..."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: project-type
+    attributes:
+      label: 🏷️ Project Type
+      description: What kind of project is this?
+      options:
+        - "ML Pipeline"
+        - "Data Processing Pipeline"
+        - "Integration/Plugin"
+        - "Tool/Utility"
+        - "Tutorial/Guide"
+        - "Research Project"
+        - "Production System"
+        - "Proof of Concept"
+        - "Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: tech-stack
+    attributes:
+      label: 🛠️ Tech Stack
+      description: What technologies did you use?
+      placeholder: "ops0, scikit-learn, AWS, Docker..."
+    validations:
+      required: false
+
+  - type: textarea
+    id: highlights
+    attributes:
+      label: ⭐ Key Highlights
+      description: What are you most proud of or excited about?
+      placeholder: "The coolest part is... / I'm excited about..."
+    validations:
+      required: false
+
+  - type: textarea
+    id: code-links
+    attributes:
+      label: 🔗 Links
+      description: Links to code, demos, blog posts, etc. (if you're comfortable sharing)
+      placeholder: "GitHub: ... / Demo: ... / Blog post: ..."
+    validations:
+      required: false
+
+  - type: textarea
+    id: lessons-learned
+    attributes:
+      label: 🎓 Lessons Learned
+      description: What did you learn? Any tips for others?
+      placeholder: "I learned that... / My advice would be..."
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: feedback-wanted
+    attributes:
+      label: 💬 Feedback Wanted
+      description: What kind of feedback are you looking for?
+      options:
+        - label: "General feedback and thoughts"
+        - label: "Technical suggestions"
+        - label: "Performance optimization ideas"
+        - label: "Architecture review"
+        - label: "Feature suggestions"
+        - label: "Just sharing - no feedback needed"

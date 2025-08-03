@@ -1,0 +1,57 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have a great idea for ops0? Let's discuss it! 🚀
+        
+        This is the perfect place to brainstorm new features, improvements, or completely new directions for the project.
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: 💡 Your Idea
+      description: Describe your idea in detail
+      placeholder: "What if ops0 could..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem-solving
+    attributes:
+      label: 🎯 Problem It Solves
+      description: What problem does this idea address?
+      placeholder: "This would help users who..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: potential-implementation
+    attributes:
+      label: 🛠️ Potential Implementation
+      description: How might this work? (Don't worry about technical details)
+      placeholder: "This could work by..."
+    validations:
+      required: false
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: 📏 Scope
+      description: How big of an idea is this?
+      options:
+        - "Small enhancement"
+        - "Medium feature"
+        - "Major feature"
+        - "Architectural change"
+        - "Ecosystem addition"
+    validations:
+      required: true
+
+  - type: textarea
+    id: inspiration
+    attributes:
+      label: 🌟 Inspiration
+      description: What inspired this idea? Any examples from other tools?
+      placeholder: "I saw this pattern in... / I was frustrated when..."
+    validations:
+      required: false

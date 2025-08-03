@@ -1,0 +1,277 @@
+name: ⚡ Performance Issue
+description: Report performance problems or optimization opportunities in ops0
+title: "[Performance]: "
+labels: ["performance", "needs-investigation"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping us optimize ops0! 🚀
+        
+        Performance issues help us make ops0 faster for everyone. Please provide as much detail as possible to help us investigate.
+
+  - type: textarea
+    id: performance-problem
+    attributes:
+      label: 🐌 Performance Problem
+      description: Describe the performance issue you're experiencing
+      placeholder: "My pipeline takes 10 minutes to run when it should take 2 minutes..."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: performance-area
+    attributes:
+      label: 📊 Performance Area
+      description: Which area of ops0 is experiencing performance issues?
+      options:
+        - "Pipeline execution time"
+        - "Container startup time"
+        - "Data loading/saving"
+        - "Memory usage"
+        - "CPU usage"
+        - "Network/IO operations"
+        - "Cloud deployment time"
+        - "CLI responsiveness"
+        - "Storage operations"
+        - "Model loading/inference"
+        - "Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: current-performance
+    attributes:
+      label: 📈 Current Performance
+      description: What performance are you currently seeing?
+      placeholder: |
+        - Pipeline execution: 10 minutes
+        - Memory usage: 8GB peak
+        - Container startup: 45 seconds
+        - Data loading: 2 minutes for 1GB file
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-performance
+    attributes:
+      label: 🎯 Expected Performance
+      description: What performance would you expect or what have you seen elsewhere?
+      placeholder: |
+        - Pipeline execution: ~2-3 minutes (based on similar tools)
+        - Memory usage: <4GB 
+        - Container startup: <10 seconds
+        - Data loading: <30 seconds for 1GB file
+    validations:
+      required: true
+
+  - type: textarea
+    id: pipeline-details
+    attributes:
+      label: 🔧 Pipeline Details
+      description: Provide details about your pipeline that might affect performance
+      placeholder: |
+        ```python
+        @ops0.step
+        def slow_step(large_data):
+            # Processing 10GB of data
+            result = complex_computation(large_data)
+            return result
+        ```
+        
+        - Data size: 10GB
+        - Number of steps: 15
+        - Parallel execution: Yes/No
+        - External API calls: 5 per step
+      render: python
+    validations:
+      required: false
+
+  - type: textarea
+    id: profiling-data
+    attributes:
+      label: 📊 Profiling Data
+      description: |
+        If you have profiling data, timing information, or performance metrics, please share them
+      placeholder: |
+        ```
+        Step execution times:
+        - data_preprocessing: 120s
+        - feature_engineering: 180s  
+        - model_training: 300s
+        - evaluation: 45s
+        
+        Resource usage:
+        - Peak memory: 8.2GB
+        - Average CPU: 75%
+        - Disk I/O: 500MB/s read, 200MB/s write
+        ```
+      render: text
+    validations:
+      required: false
+
+  - type: dropdown
+    id: ops0-version
+    attributes:
+      label: 🏷️ ops0 Version
+      description: What version of ops0 are you using?
+      options:
+        - "Latest (main branch)"
+        - "0.2.0"
+        - "0.1.x"
+        - "Other (specify in Additional Context)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment-environment
+    attributes:
+      label: ☁️ Deployment Environment
+      description: Where are you running the pipeline?
+      options:
+        - "Local development machine"
+        - "AWS EC2"
+        - "AWS ECS/Fargate"
+        - "Google Cloud Run"
+        - "Google Kubernetes Engine"
+        - "Azure Container Instances"
+        - "Azure Kubernetes Service"
+        - "On-premise Kubernetes"
+        - "Docker local"
+        - "Other (specify in Additional Context)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: hardware-specs
+    attributes:
+      label: 💻 Hardware Specifications
+      description: What hardware/instance type are you using?
+      placeholder: |
+        Local machine:
+        - CPU: Intel i7-12700K (8 cores, 16 threads)
+        - RAM: 32GB DDR4
+        - Storage: NVMe SSD
+        
+        Or cloud instance:
+        - Instance type: c5.4xlarge
+        - vCPUs: 16
+        - Memory: 32GB
+        - Network: Up to 10 Gbps
+    validations:
+      required: false
+
+  - type: textarea
+    id: data-characteristics
+    attributes:
+      label: 📊 Data Characteristics
+      description: Describe your data that might impact performance
+      placeholder: |
+        - Data size: 10GB total
+        - File format: Parquet/CSV/JSON
+        - Number of files: 1000 small files vs 1 large file
+        - Data location: Local/S3/GCS/Azure Blob
+        - Network latency: Local/same region/cross region
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: performance-patterns
+    attributes:
+      label: 📈 Performance Patterns
+      description: When do you notice the performance issues? (Check all that apply)
+      options:
+        - label: "Consistent slow performance"
+        - label: "Performance degrades over time"
+        - label: "Only slow on first run (cold start)"
+        - label: "Slow only with large datasets"
+        - label: "Intermittent performance issues"
+        - label: "Slower than expected baseline"
+        - label: "Memory leaks or increasing usage"
+        - label: "High CPU usage with little progress"
+
+  - type: textarea
+    id: comparison-data
+    attributes:
+      label: 🔀 Comparison with Other Tools
+      description: |
+        Have you compared with other tools? How does ops0 perform relative to alternatives?
+      placeholder: |
+        - Airflow: Same pipeline takes 5 minutes
+        - Prefect: Same pipeline takes 3 minutes  
+        - Direct Python script: Takes 90 seconds
+        - Kubeflow: Takes 8 minutes
+    validations:
+      required: false
+
+  - type: textarea
+    id: attempted-optimizations
+    attributes:
+      label: 🛠️ Attempted Optimizations
+      description: What have you tried to improve performance?
+      placeholder: |
+        - Increased container memory limits
+        - Used different instance types
+        - Optimized data loading code
+        - Added caching
+        - Parallelized certain steps
+        - Used different file formats
+    validations:
+      required: false
+
+  - type: dropdown
+    id: performance-priority
+    attributes:
+      label: ⭐ Performance Priority
+      description: How critical is this performance issue?
+      options:
+        - "🔥 Critical - Blocking production use"
+        - "📈 High - Significantly impacts workflow"
+        - "📊 Medium - Noticeable but manageable"
+        - "🎁 Low - Minor optimization opportunity"
+    validations:
+      required: true
+
+  - type: textarea
+    id: business-impact
+    attributes:
+      label: 💼 Business Impact
+      description: How does this performance issue impact your work or business?
+      placeholder: |
+        - Delays model deployment by X hours
+        - Increases cloud costs by $X per run
+        - Blocks real-time inference requirements
+        - Impacts team productivity
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: 📝 Additional Context
+      description: |
+        Any other information that might help us investigate the performance issue
+      placeholder: |
+        - Logs showing timing information
+        - Screenshots of monitoring dashboards
+        - Comparison with previous versions
+        - Related performance issues
+        - External factors (network, other processes, etc.)
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: ✅ Checklist
+      description: Please confirm the following
+      options:
+        - label: "I have checked that this isn't a known performance limitation"
+          required: true
+        - label: "I have provided specific performance metrics where possible"
+          required: true
+        - label: "I have described the expected vs actual performance"
+          required: true
+        - label: "I am willing to help test performance improvements"
+          required: false

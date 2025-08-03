@@ -1,0 +1,385 @@
+name: Documentation
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'docs/**'
+      - 'src/ops0/**/*.py'
+      - 'examples/**'
+      - 'README.md'
+      - 'CONTRIBUTING.md'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'src/ops0/**/*.py'
+      - 'examples/**'
+      - 'README.md'
+      - 'CONTRIBUTING.md'
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'Deploy to production'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  # Build documentation
+  build:
+    name: Build Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Need full history for git info in docs
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-docs-${{ hashFiles('**/pyproject.toml', 'docs/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-docs-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,docs]"
+          # Install documentation specific dependencies
+          if [ -f docs/requirements.txt ]; then
+            pip install -r docs/requirements.txt
+          fi
+
+      - name: Set up Node.js (for docs site)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: docs/package-lock.json
+
+      - name: Install Node.js dependencies
+        working-directory: docs
+        run: npm ci
+
+      - name: Generate API documentation
+        run: |
+          # Generate API docs from docstrings
+          sphinx-apidoc -o docs/api src/ops0 --force --module-first
+          
+          # Generate CLI documentation
+          ops0 --help > docs/cli/help.txt
+          
+          # Generate examples documentation
+          python scripts/generate_examples_docs.py
+
+      - name: Build documentation
+        working-directory: docs
+        run: |
+          # Build Sphinx documentation
+          make clean
+          make html
+          
+          # Build Docusaurus site (if using)
+          npm run build
+        env:
+          # Set environment variables for docs build
+          PYTHONPATH: ${{ github.workspace }}/src
+          OPS0_DOCS_BUILD: true
+
+      - name: Check documentation quality
+        run: |
+          # Check for broken links
+          python scripts/check_docs_links.py docs/_build/html
+          
+          # Check for missing docstrings
+          python scripts/check_docstrings.py src/ops0
+          
+          # Validate examples still work
+          python scripts/validate_examples.py
+
+      - name: Upload documentation artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: documentation
+          path: |
+            docs/_build/html/
+            docs/build/
+          retention-days: 30
+
+      - name: Upload Pages artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/_build/html
+
+  # Test documentation
+  test-docs:
+    name: Test Documentation
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Download documentation
+        uses: actions/download-artifact@v4
+        with:
+          name: documentation
+          path: docs-test
+
+      - name: Install testing dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install linkchecker html5validator
+
+      - name: Test documentation
+        run: |
+          # Validate HTML
+          html5validator --root docs-test/ --also-check-css
+          
+          # Check for broken links (internal only for speed)
+          linkchecker --no-warnings --check-extern docs-test/
+          
+          # Test code examples in documentation
+          python scripts/test_docs_examples.py docs-test/
+
+      - name: Accessibility testing
+        run: |
+          # Install axe-core for accessibility testing
+          npm install -g @axe-core/cli
+          
+          # Run accessibility tests
+          axe docs-test/ --dir --reporter json --output accessibility-report.json || true
+
+      - name: Upload accessibility report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: accessibility-report
+          path: accessibility-report.json
+
+  # Check documentation coverage
+  docs-coverage:
+    name: Documentation Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install interrogate
+
+      - name: Check docstring coverage
+        run: |
+          # Check docstring coverage for public API
+          interrogate src/ops0/ \
+            --ignore-init-method \
+            --ignore-init-module \
+            --ignore-magic \
+            --ignore-nested-functions \
+            --ignore-private \
+            --fail-under=80 \
+            --verbose \
+            --output docs-coverage.txt
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-coverage
+          path: docs-coverage.txt
+
+      - name: Comment coverage on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            try {
+              const coverage = fs.readFileSync('docs-coverage.txt', 'utf8');
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `## 📚 Documentation Coverage\n\n\`\`\`\n${coverage}\n\`\`\``
+              });
+            } catch (error) {
+              console.log('Could not read coverage file');
+            }
+
+  # Deploy to staging for PRs
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build, test-docs]
+    if: github.event_name == 'pull_request'
+    environment:
+      name: docs-staging
+      url: https://docs-staging.ops0.xyz
+    steps:
+      - name: Download documentation
+        uses: actions/download-artifact@v4
+        with:
+          name: documentation
+          path: docs-build
+
+      - name: Deploy to staging
+        run: |
+          # Deploy to staging environment (e.g., Netlify, Vercel, or S3)
+          echo "Deploying to staging..."
+          # Example: Deploy to Netlify
+          npx netlify-cli deploy --dir=docs-build --site=${{ secrets.NETLIFY_SITE_ID }} --auth=${{ secrets.NETLIFY_AUTH_TOKEN }}
+
+      - name: Comment deployment URL
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `📖 **Documentation Preview**: https://docs-staging.ops0.xyz\n\nYour documentation changes are now available for review!`
+            });
+
+  # Deploy to production
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build, test-docs, docs-coverage]
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy == 'true')
+    environment:
+      name: docs-production
+      url: https://docs.ops0.xyz
+    steps:
+      - name: Download documentation
+        uses: actions/download-artifact@v4
+        with:
+          name: documentation
+          path: docs-build
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: docs-build
+          cname: docs.ops0.xyz
+
+      - name: Deploy to production CDN
+        run: |
+          # Sync to production CDN (e.g., CloudFront + S3)
+          aws s3 sync docs-build/ s3://${{ secrets.DOCS_S3_BUCKET }}/ --delete
+          aws cloudfront create-invalidation --distribution-id ${{ secrets.DOCS_CLOUDFRONT_ID }} --paths "/*"
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: us-east-1
+
+      - name: Update search index
+        run: |
+          # Update search index (e.g., Algolia DocSearch)
+          curl -X POST "https://crawler.algolia.com/api/1/crawlers/${{ secrets.ALGOLIA_CRAWLER_ID }}/reindex" \
+            -H "Authorization: Bearer ${{ secrets.ALGOLIA_API_KEY }}"
+
+      - name: Notify deployment success
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: 'success',
+              target_url: 'https://docs.ops0.xyz',
+              description: 'Documentation deployed successfully',
+              context: 'docs/deploy'
+            });
+
+  # Monitor documentation health
+  monitor-docs:
+    name: Monitor Documentation Health
+    runs-on: ubuntu-latest
+    needs: deploy-production
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Health check
+        run: |
+          # Check if documentation site is accessible
+          curl -f https://docs.ops0.xyz || exit 1
+          
+          # Check specific pages
+          curl -f https://docs.ops0.xyz/getting-started || exit 1
+          curl -f https://docs.ops0.xyz/api/reference || exit 1
+
+      - name: Run Lighthouse audit
+        uses: treosh/lighthouse-ci-action@v10
+        with:
+          urls: |
+            https://docs.ops0.xyz
+            https://docs.ops0.xyz/getting-started
+            https://docs.ops0.xyz/api/reference
+          uploadArtifacts: true
+          temporaryPublicStorage: true
+
+      - name: Check search functionality
+        run: |
+          # Test search API if available
+          curl -f "https://docs.ops0.xyz/api/search?q=getting+started" || echo "Search API not available"
+
+  # Cleanup old artifacts
+  cleanup:
+    name: Cleanup Old Artifacts
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Delete old documentation artifacts
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifacts = await github.rest.actions.listArtifactsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            
+            const oldArtifacts = artifacts.data.artifacts
+              .filter(artifact => artifact.name === 'documentation')
+              .filter(artifact => new Date(artifact.created_at) < new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)); // 7 days old
+            
+            for (const artifact of oldArtifacts) {
+              console.log(`Deleting artifact: ${artifact.name} (${artifact.created_at})`);
+              await github.rest.actions.deleteArtifact({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                artifact_id: artifact.id,
+              });
+            }

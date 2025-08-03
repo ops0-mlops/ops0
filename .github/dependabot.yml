@@ -1,0 +1,217 @@
+# Dependabot configuration for ops0
+# This file configures automated dependency updates for security and maintenance
+# Learn more: https://docs.github.com/en/github/administering-a-repository/configuration-options-for-dependency-updates
+
+version: 2
+updates:
+  # Python dependencies
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    assignees:
+      - "ops0-mlops/core-team"
+    reviewers:
+      - "ops0-mlops/security-team"
+      - "ops0-mlops/packaging-team"
+    labels:
+      - "dependencies"
+      - "python"
+      - "automated"
+    commit-message:
+      prefix: "deps"
+      prefix-development: "deps-dev"
+      include: "scope"
+    # Group updates to reduce PR noise
+    groups:
+      production-dependencies:
+        patterns:
+          - "requests"
+          - "pydantic"
+          - "typer"
+          - "rich"
+          - "docker"
+          - "boto3"
+          - "google-cloud-*"
+          - "azure-*"
+        update-types:
+          - "minor"
+          - "patch"
+      ml-dependencies:
+        patterns:
+          - "numpy"
+          - "pandas"
+          - "scikit-learn"
+          - "torch"
+          - "tensorflow"
+          - "transformers"
+        update-types:
+          - "patch"
+      development-dependencies:
+        patterns:
+          - "pytest*"
+          - "black"
+          - "isort"
+          - "ruff"
+          - "mypy"
+          - "pre-commit"
+        update-types:
+          - "minor"
+          - "patch"
+    # Version update strategy
+    versioning-strategy: "increase"
+    # Only security updates for major versions
+    open-pull-requests-limit: 5
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "10:00"
+      timezone: "UTC"
+    assignees:
+      - "ops0-mlops/devops-team"
+    reviewers:
+      - "ops0-mlops/ci-team"
+      - "ops0-mlops/security-team"
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "ci-cd"
+      - "automated"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    open-pull-requests-limit: 3
+
+  # Docker dependencies
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "wednesday"
+      time: "11:00"
+      timezone: "UTC"
+    assignees:
+      - "ops0-mlops/devops-team"
+    reviewers:
+      - "ops0-mlops/docker-team"
+      - "ops0-mlops/security-team"
+    labels:
+      - "dependencies"
+      - "docker"
+      - "infrastructure"
+      - "automated"
+    commit-message:
+      prefix: "docker"
+      include: "scope"
+    open-pull-requests-limit: 2
+
+  # Terraform (if we add infrastructure as code)
+  - package-ecosystem: "terraform"
+    directory: "/terraform"
+    schedule:
+      interval: "weekly"
+      day: "thursday"
+      time: "12:00"
+      timezone: "UTC"
+    assignees:
+      - "ops0-mlops/cloud-team"
+    reviewers:
+      - "ops0-mlops/devops-team"
+      - "ops0-mlops/security-team"
+    labels:
+      - "dependencies"
+      - "terraform"
+      - "infrastructure"
+      - "automated"
+    commit-message:
+      prefix: "infra"
+      include: "scope"
+    open-pull-requests-limit: 2
+
+  # NPM dependencies (for documentation site)
+  - package-ecosystem: "npm"
+    directory: "/docs"
+    schedule:
+      interval: "weekly"
+      day: "friday"
+      time: "13:00"
+      timezone: "UTC"
+    assignees:
+      - "ops0-mlops/docs-team"
+    reviewers:
+      - "ops0-mlops/frontend-team"
+      - "ops0-mlops/security-team"
+    labels:
+      - "dependencies"
+      - "npm"
+      - "documentation"
+      - "automated"
+    commit-message:
+      prefix: "docs"
+      include: "scope"
+    groups:
+      documentation-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    open-pull-requests-limit: 2
+
+# Configuration for security-only updates on specific ecosystems
+# This ensures we get immediate security patches even outside normal schedule
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    open-pull-requests-limit: 3
+    assignees:
+      - "ops0-mlops/security-team"
+    reviewers:
+      - "ops0-mlops/core-team"
+    labels:
+      - "security"
+      - "critical"
+      - "automated"
+    commit-message:
+      prefix: "security"
+      include: "scope"
+    # Only allow security updates for this configuration
+    allow:
+      - dependency-type: "all"
+        update-type: "security"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    open-pull-requests-limit: 2
+    assignees:
+      - "ops0-mlops/security-team"
+    reviewers:
+      - "ops0-mlops/devops-team"
+    labels:
+      - "security"
+      - "github-actions"
+      - "critical"
+      - "automated"
+    commit-message:
+      prefix: "security"
+      include: "scope"
+    allow:
+      - dependency-type: "all"
+        update-type: "security"

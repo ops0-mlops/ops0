@@ -1,0 +1,487 @@
+# GitHub Labels Configuration for ops0
+# This file defines standardized labels for issues and pull requests
+# Use with: https://github.com/crazy-max/ghaction-github-labeler
+
+# =============================================================================
+# Issue Type Labels
+# =============================================================================
+
+- name: "bug"
+  color: "d73a4a"
+  description: "Something isn't working"
+
+- name: "enhancement"
+  color: "a2eeef"
+  description: "New feature or request"
+
+- name: "documentation"
+  color: "0075ca"
+  description: "Improvements or additions to documentation"
+
+- name: "performance"
+  color: "ff9500"
+  description: "Performance improvements or issues"
+
+- name: "security"
+  color: "b60205"
+  description: "Security related issues"
+
+- name: "refactoring"
+  color: "fbca04"
+  description: "Code refactoring and cleanup"
+
+- name: "dependencies"
+  color: "0366d6"
+  description: "Pull requests that update a dependency file"
+
+- name: "breaking-change"
+  color: "d4c5f9"
+  description: "Introduces breaking changes"
+
+- name: "hotfix"
+  color: "b60205"
+  description: "Critical fix that needs immediate attention"
+
+# =============================================================================
+# Priority Labels
+# =============================================================================
+
+- name: "priority: critical"
+  color: "b60205"
+  description: "Highest priority - needs immediate attention"
+
+- name: "priority: high"
+  color: "d93f0b"
+  description: "High priority"
+
+- name: "priority: medium"
+  color: "fbca04"
+  description: "Medium priority"
+
+- name: "priority: low"
+  color: "0e8a16"
+  description: "Low priority"
+
+# =============================================================================
+# Component Labels (ops0 specific)
+# =============================================================================
+
+- name: "component: core"
+  color: "1d76db"
+  description: "Core framework and decorators"
+
+- name: "component: storage"
+  color: "1d76db"
+  description: "Storage layer and data management"
+
+- name: "component: execution"
+  color: "1d76db"
+  description: "Pipeline execution and orchestration"
+
+- name: "component: deployment"
+  color: "1d76db"
+  description: "Cloud deployment and infrastructure"
+
+- name: "component: cli"
+  color: "1d76db"
+  description: "Command line interface"
+
+- name: "component: monitoring"
+  color: "1d76db"
+  description: "Monitoring and observability"
+
+- name: "component: integrations"
+  color: "1d76db"
+  description: "ML framework integrations"
+
+- name: "component: containers"
+  color: "1d76db"
+  description: "Container management and Docker"
+
+- name: "component: api"
+  color: "1d76db"
+  description: "Public API and decorators"
+
+- name: "component: graph"
+  color: "1d76db"
+  description: "Pipeline graph and DAG management"
+
+# =============================================================================
+# Cloud Provider Labels
+# =============================================================================
+
+- name: "cloud: aws"
+  color: "ff9900"
+  description: "Amazon Web Services related"
+
+- name: "cloud: gcp"
+  color: "4285f4"
+  description: "Google Cloud Platform related"
+
+- name: "cloud: azure"
+  color: "0078d4"
+  description: "Microsoft Azure related"
+
+- name: "cloud: kubernetes"
+  color: "326ce5"
+  description: "Kubernetes related"
+
+- name: "cloud: docker"
+  color: "2496ed"
+  description: "Docker related"
+
+# =============================================================================
+# ML Framework Labels
+# =============================================================================
+
+- name: "ml: scikit-learn"
+  color: "f7931e"
+  description: "scikit-learn integration"
+
+- name: "ml: pytorch"
+  color: "ee4c2c"
+  description: "PyTorch integration"
+
+- name: "ml: tensorflow"
+  color: "ff6f00"
+  description: "TensorFlow integration"
+
+- name: "ml: huggingface"
+  color: "ffbb00"
+  description: "Hugging Face integration"
+
+- name: "ml: xgboost"
+  color: "1ba3d6"
+  description: "XGBoost integration"
+
+- name: "ml: lightgbm"
+  color: "2e8b57"
+  description: "LightGBM integration"
+
+# =============================================================================
+# Status Labels
+# =============================================================================
+
+- name: "status: needs-triage"
+  color: "ededed"
+  description: "Needs initial triage and categorization"
+
+- name: "status: needs-investigation"
+  color: "ededed"
+  description: "Needs further investigation"
+
+- name: "status: needs-discussion"
+  color: "ededed"
+  description: "Needs community discussion"
+
+- name: "status: needs-reproduction"
+  color: "ededed"
+  description: "Bug needs reproduction steps"
+
+- name: "status: confirmed"
+  color: "0e8a16"
+  description: "Issue confirmed and ready for development"
+
+- name: "status: in-progress"
+  color: "fbca04"
+  description: "Currently being worked on"
+
+- name: "status: blocked"
+  color: "d93f0b"
+  description: "Blocked by another issue or external dependency"
+
+- name: "status: stale"
+  color: "ededed"
+  description: "Issue/PR has been inactive for a long time"
+
+- name: "status: duplicate"
+  color: "cfd3d7"
+  description: "This issue or pull request already exists"
+
+- name: "status: wontfix"
+  color: "ffffff"
+  description: "This will not be worked on"
+
+# =============================================================================
+# Workflow Labels
+# =============================================================================
+
+- name: "review: needed"
+  color: "0052cc"
+  description: "Needs code review"
+
+- name: "review: approved"
+  color: "0e8a16"
+  description: "PR approved and ready to merge"
+
+- name: "review: changes-requested"
+  color: "d93f0b"
+  description: "Changes requested before approval"
+
+- name: "ci: failing"
+  color: "d93f0b"
+  description: "CI checks are failing"
+
+- name: "ci: fixed"
+  color: "0e8a16"
+  description: "CI checks now passing"
+
+# =============================================================================
+# Experience Level Labels
+# =============================================================================
+
+- name: "good first issue"
+  color: "7057ff"
+  description: "Good for newcomers"
+
+- name: "help wanted"
+  color: "008672"
+  description: "Extra attention is needed"
+
+- name: "beginner-friendly"
+  color: "7057ff"
+  description: "Suitable for beginners"
+
+- name: "expert-needed"
+  color: "b60205"
+  description: "Requires domain expertise"
+
+# =============================================================================
+# Size/Effort Labels
+# =============================================================================
+
+- name: "size: xs"
+  color: "3cbf00"
+  description: "Extra small effort (< 2 hours)"
+
+- name: "size: s"
+  color: "5d9801"
+  description: "Small effort (< 1 day)"
+
+- name: "size: m"
+  color: "7f7203"
+  description: "Medium effort (1-3 days)"
+
+- name: "size: l"
+  color: "a14c02"
+  description: "Large effort (3-7 days)"
+
+- name: "size: xl"
+  color: "c22602"
+  description: "Extra large effort (> 1 week)"
+
+# =============================================================================
+# Community Labels
+# =============================================================================
+
+- name: "community"
+  color: "0e8a16"
+  description: "Community contribution"
+
+- name: "external-contribution"
+  color: "0e8a16"
+  description: "Contribution from external contributor"
+
+- name: "hacktoberfest"
+  color: "ff8c00"
+  description: "Hacktoberfest eligible issue"
+
+- name: "first-time-contributor"
+  color: "7057ff"
+  description: "First contribution from this user"
+
+# =============================================================================
+# Release Labels
+# =============================================================================
+
+- name: "release: major"
+  color: "b60205"
+  description: "Goes into next major release"
+
+- name: "release: minor"
+  color: "fbca04"
+  description: "Goes into next minor release"
+
+- name: "release: patch"
+  color: "0e8a16"
+  description: "Goes into next patch release"
+
+- name: "release: backport"
+  color: "5319e7"
+  description: "Should be backported to previous release"
+
+- name: "changelog: added"
+  color: "0e8a16"
+  description: "New feature for changelog"
+
+- name: "changelog: changed"
+  color: "fbca04"
+  description: "Changed feature for changelog"
+
+- name: "changelog: deprecated"
+  color: "ff9500"
+  description: "Deprecated feature for changelog"
+
+- name: "changelog: removed"
+  color: "d93f0b"
+  description: "Removed feature for changelog"
+
+- name: "changelog: fixed"
+  color: "0052cc"
+  description: "Bug fix for changelog"
+
+- name: "changelog: security"
+  color: "b60205"
+  description: "Security fix for changelog"
+
+# =============================================================================
+# Environment Labels
+# =============================================================================
+
+- name: "env: development"
+  color: "1d76db"
+  description: "Development environment specific"
+
+- name: "env: staging"
+  color: "fbca04"
+  description: "Staging environment specific"
+
+- name: "env: production"
+  color: "d93f0b"
+  description: "Production environment specific"
+
+- name: "env: local"
+  color: "0e8a16"
+  description: "Local development specific"
+
+# =============================================================================
+# Operating System Labels
+# =============================================================================
+
+- name: "os: linux"
+  color: "333333"
+  description: "Linux specific issue"
+
+- name: "os: macos"
+  color: "333333"
+  description: "macOS specific issue"
+
+- name: "os: windows"
+  color: "333333"
+  description: "Windows specific issue"
+
+# =============================================================================
+# Python Version Labels
+# =============================================================================
+
+- name: "python: 3.8"
+  color: "306998"
+  description: "Python 3.8 specific"
+
+- name: "python: 3.9"
+  color: "306998"
+  description: "Python 3.9 specific"
+
+- name: "python: 3.10"
+  color: "306998"
+  description: "Python 3.10 specific"
+
+- name: "python: 3.11"
+  color: "306998"
+  description: "Python 3.11 specific"
+
+- name: "python: 3.12"
+  color: "306998"
+  description: "Python 3.12 specific"
+
+# =============================================================================
+# Automated Labels
+# =============================================================================
+
+- name: "automated"
+  color: "ededed"
+  description: "Created automatically by bots or workflows"
+
+- name: "dependabot"
+  color: "0366d6"
+  description: "Created by Dependabot"
+
+- name: "renovate"
+  color: "1a1f6c"
+  description: "Created by Renovate"
+
+# =============================================================================
+# Special Labels
+# =============================================================================
+
+- name: "question"
+  color: "d876e3"
+  description: "Further information is requested"
+
+- name: "invalid"
+  color: "e4e669"
+  description: "This doesn't seem right"
+
+- name: "wip"
+  color: "fbca04"
+  description: "Work in progress"
+
+- name: "ready-for-review"
+  color: "0e8a16"
+  description: "Ready for code review"
+
+- name: "do-not-merge"
+  color: "b60205"
+  description: "Should not be merged yet"
+
+- name: "merge-when-ready"
+  color: "0e8a16"
+  description: "Auto-merge when all checks pass"
+
+# =============================================================================
+# Research and Experimental
+# =============================================================================
+
+- name: "research"
+  color: "8b5cf6"
+  description: "Research or experimental feature"
+
+- name: "spike"
+  color: "8b5cf6"
+  description: "Research spike or proof of concept"
+
+- name: "experimental"
+  color: "8b5cf6"
+  description: "Experimental feature"
+
+- name: "rfc"
+  color: "8b5cf6"
+  description: "Request for comments"
+
+# =============================================================================
+# Testing Labels
+# =============================================================================
+
+- name: "testing: unit"
+  color: "0052cc"
+  description: "Unit testing related"
+
+- name: "testing: integration"
+  color: "0052cc"
+  description: "Integration testing related"
+
+- name: "testing: e2e"
+  color: "0052cc"
+  description: "End-to-end testing related"
+
+- name: "testing: performance"
+  color: "0052cc"
+  description: "Performance testing related"
+
+- name: "testing: manual"
+  color: "0052cc"
+  description: "Manual testing required"
+
+- name: "needs-tests"
+  color: "d93f0b"
+  description: "Needs test coverage"

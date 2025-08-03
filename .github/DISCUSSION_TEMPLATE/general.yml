@@ -1,0 +1,57 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for starting a discussion! 💬
+        
+        This is the place for general questions, conversations, and community discussions about ops0.
+
+  - type: textarea
+    id: topic
+    attributes:
+      label: 🎯 Discussion Topic
+      description: What would you like to discuss?
+      placeholder: "I'd like to discuss..."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: 📂 Category
+      description: What category does this discussion fit into?
+      options:
+        - "General Question"
+        - "Best Practices"
+        - "Architecture Discussion"
+        - "Performance Optimization"
+        - "Integration Patterns"
+        - "Use Case Discussion"
+        - "Community Feedback"
+        - "Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: 📝 Additional Context
+      description: Provide any additional context or background information
+      placeholder: "Background information, links, examples..."
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: relevant-areas
+    attributes:
+      label: 🏷️ Relevant Areas
+      description: Which areas of ops0 does this relate to? (Check all that apply)
+      options:
+        - label: "Core Framework"
+        - label: "Cloud Deployment"
+        - label: "ML Integrations"
+        - label: "Documentation"
+        - label: "Performance"
+        - label: "Security"
+        - label: "CLI/DX"
+        - label: "Community"

@@ -1,0 +1,21 @@
+# Funding and Sponsorship Configuration for ops0
+# This file enables the "Sponsor" button in the GitHub repository
+# Learn more: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
+
+# GitHub Sponsors
+github: [ops0-mlops]
+
+# Open Collective
+open_collective: ops0
+
+# Other funding platforms
+patreon: ops0mlops
+ko_fi: ops0
+tidelift: "pypi/ops0"
+community_bridge: ops0
+
+# Custom funding URLs
+custom: [
+  "https://ops0.xyz/sponsor",
+  "https://buy.stripe.com/ops0-support"
+]

@@ -1,0 +1,37 @@
+# Issue template configuration for ops0
+# This file configures the issue template chooser and external links
+# Learn more: https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/configuring-issue-templates-for-your-repository
+
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Community Discord
+    url: https://discord.gg/ops0
+    about: Join our Discord community for questions, discussions, and real-time help from the team and community members.
+
+  - name: 📚 Documentation
+    url: https://docs.ops0.xyz
+    about: Check our comprehensive documentation for guides, tutorials, and API reference.
+
+  - name: 🚀 Getting Started Guide
+    url: https://docs.ops0.xyz/getting-started
+    about: New to ops0? Start here with our 5-minute quickstart guide.
+
+  - name: 💡 Discussions
+    url: https://github.com/ops0-mlops/ops0/discussions
+    about: For general questions, ideas, and community discussions that aren't bug reports or feature requests.
+
+  - name: 📖 Examples & Tutorials
+    url: https://docs.ops0.xyz/examples
+    about: Browse real-world pipeline examples and step-by-step tutorials.
+
+  - name: 🔧 Troubleshooting Guide
+    url: https://docs.ops0.xyz/troubleshooting
+    about: Common issues and solutions. Check here before reporting a bug.
+
+  - name: 📧 Enterprise Support
+    url: https://ops0.xyz/contact
+    about: For enterprise customers needing priority support, custom integrations, or commercial licensing.
+
+  - name: 🏥 System Status
+    url: https://status.ops0.xyz
+    about: Check if ops0 services are experiencing any outages or issues.

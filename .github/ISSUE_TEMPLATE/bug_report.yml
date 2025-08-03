@@ -1,0 +1,217 @@
+name: 🐛 Bug Report
+description: File a bug report to help us improve ops0
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report! 🙏
+        
+        Before submitting, please search [existing issues](https://github.com/ops0-mlops/ops0/issues) to avoid duplicates.
+
+  - type: textarea
+    id: bug-description
+    attributes:
+      label: 🐛 Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: Describe what happened and what you expected to happen...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction-steps
+    attributes:
+      label: 🔄 Steps to Reproduce
+      description: Step by step instructions to reproduce the issue
+      placeholder: |
+        1. Create a pipeline with `@ops0.step`
+        2. Run `ops0 deploy`
+        3. See error
+      value: |
+        1. 
+        2. 
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: ✅ Expected Behavior
+      description: What should have happened?
+      placeholder: The pipeline should deploy successfully...
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: ❌ Actual Behavior
+      description: What actually happened?
+      placeholder: Got an error message...
+    validations:
+      required: true
+
+  - type: textarea
+    id: minimal-example
+    attributes:
+      label: 🧪 Minimal Reproducible Example
+      description: |
+        Please provide a minimal code example that reproduces the issue.
+        This helps us debug faster!
+      placeholder: |
+        ```python
+        import ops0
+        
+        @ops0.step
+        def failing_step():
+            # Your code that reproduces the bug
+            pass
+        
+        # Run this to reproduce
+        ops0.run()
+        ```
+      render: python
+    validations:
+      required: false
+
+  - type: textarea
+    id: error-logs
+    attributes:
+      label: 📋 Error Logs
+      description: |
+        Copy and paste any relevant error messages or logs.
+        Tip: You can attach images by clicking this area to highlight it and then dragging files in.
+      placeholder: |
+        Paste error logs here...
+        
+        You can get verbose logs with:
+        export OPS0_LOG_LEVEL=DEBUG
+        ops0 run
+      render: shell
+    validations:
+      required: false
+
+  - type: dropdown
+    id: ops0-version
+    attributes:
+      label: 🏷️ ops0 Version
+      description: What version of ops0 are you running?
+      options:
+        - "Latest (main branch)"
+        - "0.1.0"
+        - "0.1.1"
+        - "0.2.0"
+        - "Other (please specify in Additional Context)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: python-version
+    attributes:
+      label: 🐍 Python Version
+      description: What version of Python are you using?
+      options:
+        - "3.12"
+        - "3.11"
+        - "3.10"
+        - "3.9"
+        - "3.8"
+        - "Other (please specify in Additional Context)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: 💻 Operating System
+      description: What operating system are you using?
+      options:
+        - "Linux"
+        - "macOS"
+        - "Windows"
+        - "Docker"
+        - "Other (please specify in Additional Context)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment-target
+    attributes:
+      label: ☁️ Deployment Target
+      description: Where are you trying to deploy?
+      options:
+        - "Local development"
+        - "AWS"
+        - "Google Cloud"
+        - "Azure"
+        - "Docker"
+        - "Kubernetes"
+        - "Other (please specify in Additional Context)"
+    validations:
+      required: false
+
+  - type: textarea
+    id: environment-details
+    attributes:
+      label: 🌍 Environment Details
+      description: |
+        Please provide output of `pip list | grep -E "(ops0|pandas|numpy|scikit|torch|tensorflow)"`
+        and any other relevant environment information.
+      placeholder: |
+        ```
+        ops0==0.1.0
+        pandas==2.0.3
+        numpy==1.24.3
+        scikit-learn==1.3.0
+        ```
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: pipeline-type
+    attributes:
+      label: 🔧 Pipeline Type
+      description: What type of ML pipeline are you working with? (Check all that apply)
+      options:
+        - label: "Data preprocessing"
+        - label: "Model training"
+        - label: "Model inference/prediction"
+        - label: "Batch processing"
+        - label: "Real-time/streaming"
+        - label: "Feature engineering"
+        - label: "Model evaluation"
+        - label: "Other"
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: 📝 Additional Context
+      description: |
+        Add any other context about the problem here.
+        
+        - Are you using any specific ML frameworks? (scikit-learn, PyTorch, TensorFlow, etc.)
+        - Any specific cloud provider configurations?
+        - Custom decorators or configurations?
+        - Related issues or discussions?
+      placeholder: Any additional information that might help us understand the issue...
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: ✅ Checklist
+      description: Please confirm the following
+      options:
+        - label: "I have searched existing issues to avoid duplicates"
+          required: true
+        - label: "I have provided a clear description of the bug"
+          required: true
+        - label: "I have included steps to reproduce the issue"
+          required: true
+        - label: "I am willing to help test the fix"
+          required: false

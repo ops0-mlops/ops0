@@ -1,0 +1,433 @@
+name: Project Management
+
+on:
+  issues:
+    types: [opened, edited, closed, reopened, labeled, unlabeled]
+  pull_request:
+    types: [opened, edited, closed, reopened, labeled, unlabeled, synchronize]
+  issue_comment:
+    types: [created]
+  schedule:
+    # Run daily at 1 AM UTC for maintenance tasks
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: write
+  contents: read
+
+jobs:
+  # Auto-label new issues and PRs
+  auto-label:
+    name: Auto Label Issues and PRs
+    runs-on: ubuntu-latest
+    if: github.event.action == 'opened'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Auto-label based on title and content
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { context } = require('@actions/github');
+            const isIssue = context.eventName === 'issues';
+            const isPR = context.eventName === 'pull_request';
+            const item = context.payload.issue || context.payload.pull_request;
+            
+            const title = item.title.toLowerCase();
+            const body = item.body ? item.body.toLowerCase() : '';
+            const labels = [];
+            
+            // Component-based labeling
+            if (title.includes('cli') || body.includes('command line')) {
+              labels.push('component: cli');
+            }
+            if (title.includes('storage') || body.includes('data storage')) {
+              labels.push('component: storage');
+            }
+            if (title.includes('deploy') || body.includes('deployment')) {
+              labels.push('component: deployment');
+            }
+            if (title.includes('docker') || body.includes('container')) {
+              labels.push('component: containers');
+            }
+            if (title.includes('monitor') || body.includes('observability')) {
+              labels.push('component: monitoring');
+            }
+            
+            // Cloud provider labeling
+            if (body.includes('aws') || body.includes('amazon')) {
+              labels.push('cloud: aws');
+            }
+            if (body.includes('gcp') || body.includes('google cloud')) {
+              labels.push('cloud: gcp');
+            }
+            if (body.includes('azure') || body.includes('microsoft')) {
+              labels.push('cloud: azure');
+            }
+            if (body.includes('kubernetes') || body.includes('k8s')) {
+              labels.push('cloud: kubernetes');
+            }
+            
+            // ML framework labeling
+            if (body.includes('scikit-learn') || body.includes('sklearn')) {
+              labels.push('ml: scikit-learn');
+            }
+            if (body.includes('pytorch') || body.includes('torch')) {
+              labels.push('ml: pytorch');
+            }
+            if (body.includes('tensorflow') || body.includes('tf')) {
+              labels.push('ml: tensorflow');
+            }
+            if (body.includes('hugging face') || body.includes('transformers')) {
+              labels.push('ml: huggingface');
+            }
+            
+            // Priority labeling based on keywords
+            if (title.includes('critical') || title.includes('urgent') || body.includes('production down')) {
+              labels.push('priority: critical');
+            } else if (title.includes('important') || body.includes('blocking')) {
+              labels.push('priority: high');
+            }
+            
+            // Issue type labeling for PRs
+            if (isPR) {
+              if (title.includes('fix') || title.includes('bug')) {
+                labels.push('bug');
+              } else if (title.includes('feat') || title.includes('feature')) {
+                labels.push('enhancement');
+              } else if (title.includes('docs') || title.includes('documentation')) {
+                labels.push('documentation');
+              } else if (title.includes('perf') || title.includes('performance')) {
+                labels.push('performance');
+              } else if (title.includes('refactor') || title.includes('cleanup')) {
+                labels.push('refactoring');
+              }
+              
+              // Check for breaking changes
+              if (title.includes('breaking') || body.includes('breaking change')) {
+                labels.push('breaking-change');
+              }
+            }
+            
+            // Size estimation for PRs based on changes
+            if (isPR) {
+              const additions = item.additions || 0;
+              const deletions = item.deletions || 0;
+              const changes = additions + deletions;
+              
+              if (changes < 10) {
+                labels.push('size: xs');
+              } else if (changes < 50) {
+                labels.push('size: s');
+              } else if (changes < 200) {
+                labels.push('size: m');
+              } else if (changes < 500) {
+                labels.push('size: l');
+              } else {
+                labels.push('size: xl');
+              }
+            }
+            
+            // Add default labels
+            if (isIssue) {
+              labels.push('status: needs-triage');
+            }
+            if (isPR) {
+              labels.push('review: needed');
+            }
+            
+            // Apply labels
+            if (labels.length > 0) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: item.number,
+                labels: labels
+              });
+              
+              console.log(`Added labels: ${labels.join(', ')}`);
+            }
+
+  # Welcome new contributors
+  welcome-contributor:
+    name: Welcome New Contributors
+    runs-on: ubuntu-latest
+    if: github.event.action == 'opened'
+    steps:
+      - name: Check if first-time contributor
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { context } = require('@actions/github');
+            const author = context.payload.sender.login;
+            
+            // Check if this is their first contribution
+            const { data: issues } = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${context.repo.owner}/${context.repo.repo} author:${author}`,
+              sort: 'created',
+              order: 'asc',
+              per_page: 1
+            });
+            
+            const isFirstTime = issues.total_count === 1;
+            
+            if (isFirstTime) {
+              const isIssue = context.eventName === 'issues';
+              const welcomeMessage = isIssue 
+                ? `👋 Welcome to ops0, @${author}! Thanks for opening your first issue. 
+
+              We're excited to have you in our community! A team member will review your issue soon.
+              
+              In the meantime, feel free to:
+              - 📚 Check out our [documentation](https://docs.ops0.xyz)
+              - 💬 Join our [Discord community](https://discord.gg/ops0)
+              - ⭐ Star the repository if you find ops0 useful!`
+                              : `🎉 Thanks for your first contribution to ops0, @${author}!
+              
+              We're thrilled to have you contributing to the project. A maintainer will review your pull request soon.
+              
+              A few things to keep in mind:
+              - ✅ Make sure all CI checks pass
+              - 📝 Update documentation if needed
+              - 🧪 Add tests for new functionality
+              - 💬 Feel free to ask questions in the comments
+              
+              Welcome to the ops0 community! 🚀`;
+              
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue?.number || context.payload.pull_request?.number,
+                body: welcomeMessage
+              });
+              
+              // Add first-time contributor label
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue?.number || context.payload.pull_request?.number,
+                labels: ['first-time-contributor']
+              });
+            }
+
+  # Manage stale issues and PRs
+  stale-management:
+    name: Manage Stale Issues and PRs
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Close stale issues and PRs
+        uses: actions/stale@v9
+        with:
+          stale-issue-message: |
+            👋 This issue has been automatically marked as stale because it has not had recent activity. 
+            
+            It will be closed if no further activity occurs within 7 days. If you believe this issue is still relevant, please comment to keep it open.
+            
+            Thank you for your contributions to ops0! 🙏
+          stale-pr-message: |
+            👋 This pull request has been automatically marked as stale because it has not had recent activity.
+            
+            It will be closed if no further activity occurs within 7 days. If you're still working on this, please comment or push new commits to keep it open.
+            
+            Thank you for your contributions to ops0! 🙏
+          close-issue-message: |
+            🤖 This issue was automatically closed because it has been stale for 7 days with no activity.
+            
+            If you believe this was closed in error, please reopen it and add a comment explaining why.
+          close-pr-message: |
+            🤖 This pull request was automatically closed because it has been stale for 7 days with no activity.
+            
+            If you're still working on this, please reopen it and add a comment with an update.
+          days-before-stale: 60
+          days-before-close: 7
+          stale-issue-label: 'status: stale'
+          stale-pr-label: 'status: stale'
+          exempt-issue-labels: 'priority: critical,priority: high,status: blocked,good first issue'
+          exempt-pr-labels: 'priority: critical,priority: high,status: blocked,do-not-merge'
+
+  # Auto-assign reviewers for PRs
+  assign-reviewers:
+    name: Auto-assign Reviewers
+    runs-on: ubuntu-latest
+    if: github.event.action == 'opened' && github.event_name == 'pull_request'
+    steps:
+      - name: Assign reviewers based on files changed
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { context } = require('@actions/github');
+            const pr = context.payload.pull_request;
+            
+            // Get list of changed files
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number
+            });
+            
+            const changedFiles = files.map(file => file.filename);
+            const reviewers = new Set();
+            const teamReviewers = new Set();
+            
+            // Component-based reviewer assignment
+            if (changedFiles.some(file => file.startsWith('src/ops0/core/'))) {
+              teamReviewers.add('core-team');
+            }
+            if (changedFiles.some(file => file.startsWith('src/ops0/cloud/'))) {
+              teamReviewers.add('cloud-team');
+            }
+            if (changedFiles.some(file => file.startsWith('src/ops0/cli/'))) {
+              teamReviewers.add('cli-team');
+            }
+            if (changedFiles.some(file => file.startsWith('docs/'))) {
+              teamReviewers.add('docs-team');
+            }
+            if (changedFiles.some(file => file.includes('security') || file.includes('auth'))) {
+              teamReviewers.add('security-team');
+            }
+            if (changedFiles.some(file => file.startsWith('.github/'))) {
+              teamReviewers.add('devops-team');
+            }
+            
+            // Assign reviewers if we found any
+            if (reviewers.size > 0 || teamReviewers.size > 0) {
+              await github.rest.pulls.requestReviewers({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+                reviewers: Array.from(reviewers),
+                team_reviewers: Array.from(teamReviewers)
+              });
+            }
+
+  # Update project boards
+  update-project-board:
+    name: Update Project Board
+    runs-on: ubuntu-latest
+    if: github.event.action == 'opened' || github.event.action == 'closed'
+    steps:
+      - name: Add to project board
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { context } = require('@actions/github');
+            const isIssue = context.eventName === 'issues';
+            const item = context.payload.issue || context.payload.pull_request;
+            
+            // Add logic to update GitHub Projects (beta) boards
+            // This would require the project ID and field IDs
+            console.log(`Would update project board for ${isIssue ? 'issue' : 'PR'} #${item.number}`);
+
+  # Auto-close duplicate issues
+  close-duplicates:
+    name: Close Duplicate Issues
+    runs-on: ubuntu-latest
+    if: github.event.action == 'labeled' && contains(github.event.label.name, 'duplicate')
+    steps:
+      - name: Close duplicate issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { context } = require('@actions/github');
+            const issue = context.payload.issue;
+            
+            if (issue && issue.state === 'open') {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed'
+              });
+              
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: '🤖 This issue has been automatically closed as it was marked as a duplicate.\n\nIf you believe this was done in error, please reopen the issue and provide additional context.'
+              });
+            }
+
+  # Celebrate milestones
+  celebrate-milestones:
+    name: Celebrate Milestones
+    runs-on: ubuntu-latest
+    if: github.event.action == 'closed'
+    steps:
+      - name: Check for milestones
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { context } = require('@actions/github');
+            const isIssue = context.eventName === 'issues';
+            const item = context.payload.issue || context.payload.pull_request;
+            
+            // Check if this is a special milestone number
+            const milestoneNumbers = [100, 250, 500, 1000, 2500, 5000];
+            
+            if (milestoneNumbers.includes(item.number)) {
+              const emoji = item.number >= 1000 ? '🎉🎊🚀' : item.number >= 500 ? '🎉🎊' : '🎉';
+              const type = isIssue ? 'issue' : 'pull request';
+              
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: item.number,
+                body: `${emoji} Congratulations! This is ${type} #${item.number} - a special milestone for the ops0 project!\n\nThank you to everyone who has contributed to making ops0 better! 🙏`
+              });
+            }
+
+  # Generate weekly reports
+  weekly-report:
+    name: Generate Weekly Report
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' && github.event.schedule == '0 1 * * 1'  # Monday 1 AM
+    steps:
+      - name: Generate community report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { context } = require('@actions/github');
+            const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+            
+            // Get stats for the week
+            const { data: newIssues } = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${context.repo.owner}/${context.repo.repo} is:issue created:>=${oneWeekAgo}`
+            });
+            
+            const { data: newPRs } = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${context.repo.owner}/${context.repo.repo} is:pr created:>=${oneWeekAgo}`
+            });
+            
+            const { data: closedIssues } = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${context.repo.owner}/${context.repo.repo} is:issue closed:>=${oneWeekAgo}`
+            });
+            
+            const { data: mergedPRs } = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${context.repo.owner}/${context.repo.repo} is:pr is:merged closed:>=${oneWeekAgo}`
+            });
+            
+            // Create weekly report
+            const report = `# 📊 ops0 Weekly Report
+
+            ## Week of ${new Date().toLocaleDateString()}
+            
+            ### 📈 Activity Summary
+            - 🆕 **New Issues**: ${newIssues.total_count}
+            - 🔧 **New Pull Requests**: ${newPRs.total_count}
+            - ✅ **Closed Issues**: ${closedIssues.total_count}
+            - 🚀 **Merged PRs**: ${mergedPRs.total_count}
+            
+            ### 🎯 Focus Areas
+            - Continue improving documentation
+            - Performance optimization
+            - Community engagement
+            
+            Thank you to all contributors! 🙏
+            `;
+            
+            console.log('Weekly report generated:', report);
+            // Could post this to Discord, Slack, or create a GitHub Discussion
