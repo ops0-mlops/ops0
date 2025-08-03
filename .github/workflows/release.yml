@@ -1,4 +1,4 @@
-```yaml
+
 name: Release
 
 on:
@@ -639,4 +639,3 @@ jobs:
         run: |
           echo "🧹 Cleaning up failed release artifacts..."
           # Add cleanup logic here if needed
-```
