@@ -1,41 +1,41 @@
 """
-ops0 Core Configuration
+ops0 Configuration Management - Centralized configuration for the framework.
 
-Centralized configuration management for ops0 core components.
-Handles settings, defaults, environment variables, and configuration validation.
+Handles configuration loading from files, environment variables, and defaults.
 """
 
 import os
-import logging
-from typing import Dict, Any, Optional, Union, List, Type
-from dataclasses import dataclass, field
-from pathlib import Path
 import json
+import toml
+from pathlib import Path
+from dataclasses import dataclass, field
+from typing import Dict, Any, List, Optional, Union
+import logging
 
 from .exceptions import ConfigurationError
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class ExecutionConfig:
     """Configuration for pipeline execution"""
-    # Execution settings
+    # Retry settings
     max_retries: int = 3
     retry_delay_seconds: float = 1.0
     retry_backoff_multiplier: float = 2.0
-    execution_timeout_seconds: int = 3600
 
-    # Parallelization
+    # Timeout settings
+    execution_timeout_seconds: int = 3600
+    step_timeout_seconds: int = 1800
+
+    # Parallelism
     max_parallel_steps: int = 4
-    enable_parallel_execution: bool = True
+    thread_pool_size: int = 8
 
     # Caching
     enable_step_caching: bool = True
     cache_ttl_seconds: int = 86400  # 24 hours
-
-    # Resource management
-    default_cpu_limit: float = 1.0
-    default_memory_limit_mb: int = 1024
-    enable_resource_monitoring: bool = True
 
     def validate(self) -> List[str]:
         """Validate execution configuration"""
@@ -53,66 +53,46 @@ class ExecutionConfig:
         if self.max_parallel_steps <= 0:
             issues.append("max_parallel_steps must be positive")
 
-        if self.default_cpu_limit <= 0:
-            issues.append("default_cpu_limit must be positive")
-
-        if self.default_memory_limit_mb <= 0:
-            issues.append("default_memory_limit_mb must be positive")
-
         return issues
 
 
 @dataclass
 class StorageConfig:
-    """Configuration for storage layer"""
-    # Storage backend
+    """Configuration for data storage"""
+    # Backend settings
     backend_type: str = "local"  # local, s3, gcs, azure
     storage_path: str = ".ops0/storage"
 
     # Serialization
-    default_serializer: str = "pickle"
+    default_format: str = "auto"  # auto, pickle, parquet, json
     enable_compression: bool = True
     compression_level: int = 6
 
     # Caching
-    enable_memory_cache: bool = True
-    memory_cache_size_mb: int = 512
-    enable_disk_cache: bool = True
+    enable_cache: bool = True
+    cache_size_mb: int = 512
 
     # Cleanup
-    auto_cleanup_enabled: bool = True
-    cleanup_after_days: int = 30
-    max_storage_size_gb: int = 10
-
-    # Security
-    encrypt_at_rest: bool = False
-    encryption_key: Optional[str] = None
+    auto_cleanup: bool = True
+    retention_days: int = 30
 
     def validate(self) -> List[str]:
         """Validate storage configuration"""
         issues = []
 
-        valid_backends = ["local", "s3", "gcs", "azure", "memory"]
+        valid_backends = ["local", "s3", "gcs", "azure"]
         if self.backend_type not in valid_backends:
             issues.append(f"backend_type must be one of: {valid_backends}")
 
-        if not self.storage_path:
-            issues.append("storage_path cannot be empty")
+        valid_formats = ["auto", "pickle", "parquet", "json"]
+        if self.default_format not in valid_formats:
+            issues.append(f"default_format must be one of: {valid_formats}")
 
         if self.compression_level < 0 or self.compression_level > 9:
             issues.append("compression_level must be between 0 and 9")
 
-        if self.memory_cache_size_mb <= 0:
-            issues.append("memory_cache_size_mb must be positive")
-
-        if self.cleanup_after_days <= 0:
-            issues.append("cleanup_after_days must be positive")
-
-        if self.max_storage_size_gb <= 0:
-            issues.append("max_storage_size_gb must be positive")
-
-        if self.encrypt_at_rest and not self.encryption_key:
-            issues.append("encryption_key required when encrypt_at_rest is enabled")
+        if self.cache_size_mb <= 0:
+            issues.append("cache_size_mb must be positive")
 
         return issues
 
@@ -120,44 +100,33 @@ class StorageConfig:
 @dataclass
 class LoggingConfig:
     """Configuration for logging"""
-    # Log levels
+    # Basic settings
     log_level: str = "INFO"
-    core_log_level: str = "INFO"
-    execution_log_level: str = "INFO"
-    storage_log_level: str = "INFO"
+    log_format: str = "%(asctime)s - ops0.%(name)s - %(levelname)s - %(message)s"
 
-    # Output configuration
-    enable_console_logging: bool = True
+    # File logging
     enable_file_logging: bool = True
     log_file_path: str = ".ops0/logs/ops0.log"
-    max_log_file_size_mb: int = 100
-    max_log_files: int = 5
+    max_file_size_mb: int = 10
+    backup_count: int = 5
 
-    # Format
-    log_format: str = "%(asctime)s - ops0.%(name)s - %(levelname)s - %(message)s"
-    date_format: str = "%Y-%m-%d %H:%M:%S"
-
-    # Advanced
-    enable_structured_logging: bool = False
-    log_json_format: bool = False
-    include_caller_info: bool = False
+    # Structured logging
+    enable_json_logging: bool = False
+    include_context: bool = True
 
     def validate(self) -> List[str]:
         """Validate logging configuration"""
         issues = []
 
         valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        if self.log_level.upper() not in valid_levels:
+            issues.append(f"log_level must be one of: {valid_levels}")
 
-        for field_name in ["log_level", "core_log_level", "execution_log_level", "storage_log_level"]:
-            level = getattr(self, field_name)
-            if level not in valid_levels:
-                issues.append(f"{field_name} must be one of: {valid_levels}")
+        if self.max_file_size_mb <= 0:
+            issues.append("max_file_size_mb must be positive")
 
-        if self.max_log_file_size_mb <= 0:
-            issues.append("max_log_file_size_mb must be positive")
-
-        if self.max_log_files <= 0:
-            issues.append("max_log_files must be positive")
+        if self.backup_count < 0:
+            issues.append("backup_count must be non-negative")
 
         return issues
 
@@ -246,23 +215,19 @@ class ValidationConfig:
 
 @dataclass
 class DevelopmentConfig:
-    """Configuration for development features"""
+    """Configuration for development mode"""
     # Debug settings
     debug_mode: bool = False
     verbose_output: bool = False
-    enable_step_profiling: bool = False
+    enable_profiling: bool = False
 
-    # Hot reload
-    enable_hot_reload: bool = False
-    watch_file_changes: bool = False
+    # Auto-reload
+    enable_auto_reload: bool = True
+    watch_patterns: List[str] = field(default_factory=lambda: ["*.py"])
 
     # Testing
     enable_test_mode: bool = False
-    mock_external_dependencies: bool = False
-
-    # Development tools
-    enable_jupyter_integration: bool = True
-    enable_notebook_execution: bool = True
+    mock_external_services: bool = False
 
     def validate(self) -> List[str]:
         """Validate development configuration"""
@@ -273,7 +238,12 @@ class DevelopmentConfig:
 @dataclass
 class Ops0Config:
     """Main ops0 configuration container"""
-    # Core configurations
+    # Project settings
+    project_name: str = "ops0-project"
+    environment: str = "development"  # development, staging, production
+    version: str = "1.0.0"
+
+    # Component configurations
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
@@ -281,20 +251,11 @@ class Ops0Config:
     validation: ValidationConfig = field(default_factory=ValidationConfig)
     development: DevelopmentConfig = field(default_factory=DevelopmentConfig)
 
-    # Global settings
-    project_name: str = "ops0-project"
-    environment: str = "development"
-    version: str = "1.0.0"
-
-    # Feature flags
-    enable_experimental_features: bool = False
-    feature_flags: Dict[str, bool] = field(default_factory=dict)
-
     def validate(self) -> List[str]:
-        """Validate entire configuration"""
+        """Validate complete configuration"""
         all_issues = []
 
-        # Validate each sub-configuration
+        # Validate each component
         all_issues.extend(self.execution.validate())
         all_issues.extend(self.storage.validate())
         all_issues.extend(self.logging.validate())
@@ -302,81 +263,157 @@ class Ops0Config:
         all_issues.extend(self.validation.validate())
         all_issues.extend(self.development.validate())
 
-        # Global validation
-        if not self.project_name:
-            all_issues.append("project_name cannot be empty")
-
-        valid_environments = ["development", "testing", "staging", "production"]
+        # Global validations
+        valid_environments = ["development", "staging", "production"]
         if self.environment not in valid_environments:
             all_issues.append(f"environment must be one of: {valid_environments}")
 
         return all_issues
 
-    def is_valid(self) -> bool:
-        """Check if configuration is valid"""
-        return len(self.validate()) == 0
-
     def to_dict(self) -> Dict[str, Any]:
         """Convert configuration to dictionary"""
-
-        def _dataclass_to_dict(obj):
-            if hasattr(obj, '__dataclass_fields__'):
-                return {
-                    field_name: _dataclass_to_dict(getattr(obj, field_name))
-                    for field_name in obj.__dataclass_fields__
-                }
-            elif isinstance(obj, (list, tuple)):
-                return [_dataclass_to_dict(item) for item in obj]
-            elif isinstance(obj, dict):
-                return {key: _dataclass_to_dict(value) for key, value in obj.items()}
-            else:
-                return obj
-
-        return _dataclass_to_dict(self)
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'Ops0Config':
-        """Create configuration from dictionary"""
-
-        def _dict_to_dataclass(data_dict, target_class):
-            if not hasattr(target_class, '__dataclass_fields__'):
-                return data_dict
-
-            kwargs = {}
-            for field_name, field_info in target_class.__dataclass_fields__.items():
-                if field_name in data_dict:
-                    field_value = data_dict[field_name]
-                    field_type = field_info.type
-
-                    if hasattr(field_type, '__dataclass_fields__'):
-                        kwargs[field_name] = _dict_to_dataclass(field_value, field_type)
-                    else:
-                        kwargs[field_name] = field_value
-
-            return target_class(**kwargs)
-
-        return _dict_to_dataclass(data, cls)
+        return {
+            "project_name": self.project_name,
+            "environment": self.environment,
+            "version": self.version,
+            "execution": self.execution.__dict__,
+            "storage": self.storage.__dict__,
+            "logging": self.logging.__dict__,
+            "monitoring": self.monitoring.__dict__,
+            "validation": self.validation.__dict__,
+            "development": self.development.__dict__,
+        }
 
 
 class ConfigManager:
-    """Manages ops0 configuration with environment variable support"""
+    """Manages ops0 configuration loading and validation"""
 
     def __init__(self):
-        self._config = Ops0Config()
-        self._loaded_from_file = False
-        self._config_file_path: Optional[Path] = None
-
-        # Load configuration in order of priority
-        self._load_from_environment()
-        self._load_from_file()
+        self._config: Optional[Ops0Config] = None
+        self.config_file_path: Optional[Path] = None
 
     @property
     def config(self) -> Ops0Config:
-        """Get current configuration"""
+        """Get the current configuration, loading if necessary"""
+        if self._config is None:
+            self.load_config()
         return self._config
+
+    def load_config(self, config_path: Optional[Union[str, Path]] = None) -> Ops0Config:
+        """
+        Load configuration from file and environment.
+
+        Args:
+            config_path: Optional path to configuration file
+
+        Returns:
+            Loaded configuration
+        """
+        # Start with defaults
+        self._config = Ops0Config()
+
+        # Load from file if specified or found
+        if config_path:
+            self.config_file_path = Path(config_path)
+        else:
+            self.config_file_path = self._find_config_file()
+
+        if self.config_file_path and self.config_file_path.exists():
+            self._load_from_file()
+            logger.debug(f"Loaded configuration from {self.config_file_path}")
+
+        # Override with environment variables
+        self._load_from_environment()
+
+        # Validate configuration
+        issues = self._config.validate()
+        if issues:
+            raise ConfigurationError(
+                f"Configuration validation failed: {'; '.join(issues)}",
+                config_file=str(self.config_file_path) if self.config_file_path else None
+            )
+
+        return self._config
+
+    def _find_config_file(self) -> Optional[Path]:
+        """Find configuration file in standard locations"""
+        search_paths = [
+            Path.cwd() / "ops0.toml",
+            Path.cwd() / "pyproject.toml",
+            Path.cwd() / "ops0.json",
+            Path.cwd() / ".ops0" / "config.toml",
+            Path.cwd() / ".ops0" / "config.json",
+        ]
+
+        for path in search_paths:
+            if path.exists():
+                return path
+
+        return None
+
+    def _load_from_file(self):
+        """Load configuration from file"""
+        if not self.config_file_path:
+            return
+
+        try:
+            content = self.config_file_path.read_text()
+
+            if self.config_file_path.suffix == ".toml":
+                data = toml.loads(content)
+            elif self.config_file_path.suffix == ".json":
+                data = json.loads(content)
+            else:
+                logger.warning(f"Unsupported config file format: {self.config_file_path.suffix}")
+                return
+
+            # Extract ops0 section for pyproject.toml
+            if "tool" in data and "ops0" in data["tool"]:
+                data = data["tool"]["ops0"]
+            elif "ops0" in data:
+                data = data["ops0"]
+
+            # Update configuration with file data
+            self._update_config_from_dict(data)
+
+        except Exception as e:
+            raise ConfigurationError(
+                f"Failed to load configuration from {self.config_file_path}: {e}",
+                config_file=str(self.config_file_path)
+            )
+
+    def _update_config_from_dict(self, data: Dict[str, Any]):
+        """Update configuration from dictionary data"""
+        # Update top-level settings
+        if "project_name" in data:
+            self._config.project_name = data["project_name"]
+        if "environment" in data:
+            self._config.environment = data["environment"]
+        if "version" in data:
+            self._config.version = data["version"]
+
+        # Update component configurations
+        for section_name in ["execution", "storage", "logging", "monitoring", "validation", "development"]:
+            if section_name in data:
+                section_data = data[section_name]
+                config_obj = getattr(self._config, section_name)
+
+                for key, value in section_data.items():
+                    if hasattr(config_obj, key):
+                        setattr(config_obj, key, value)
 
     def _load_from_environment(self):
         """Load configuration from environment variables"""
+        # Global settings
+        if os.getenv("OPS0_PROJECT_NAME"):
+            self._config.project_name = os.getenv("OPS0_PROJECT_NAME")
+
+        if os.getenv("OPS0_ENV"):
+            self._config.environment = os.getenv("OPS0_ENV")
+
+        if os.getenv("OPS0_VERSION"):
+            self._config.version = os.getenv("OPS0_VERSION")
+
         # Execution config
         if os.getenv("OPS0_MAX_RETRIES"):
             self._config.execution.max_retries = int(os.getenv("OPS0_MAX_RETRIES"))
@@ -410,186 +447,58 @@ class ConfigManager:
         if os.getenv("OPS0_ENABLE_FILE_LOGGING"):
             self._config.logging.enable_file_logging = os.getenv("OPS0_ENABLE_FILE_LOGGING").lower() == "true"
 
-        # Global settings
-        if os.getenv("OPS0_PROJECT_NAME"):
-            self._config.project_name = os.getenv("OPS0_PROJECT_NAME")
-
-        if os.getenv("OPS0_ENV"):
-            self._config.environment = os.getenv("OPS0_ENV")
-
+        # Development config
         if os.getenv("OPS0_DEBUG"):
             self._config.development.debug_mode = os.getenv("OPS0_DEBUG").lower() == "true"
 
         if os.getenv("OPS0_ENABLE_MONITORING"):
             self._config.monitoring.enable_monitoring = os.getenv("OPS0_ENABLE_MONITORING").lower() == "true"
 
-    def _load_from_file(self):
-        """Load configuration from file"""
-        # Look for configuration files in order of preference
-        possible_files = [
-            Path.cwd() / "ops0.json",
-            Path.cwd() / ".ops0" / "config.json",
-            Path.home() / ".ops0" / "config.json",
-            Path("/etc/ops0/config.json"),
-        ]
+    def save_config(self, path: Optional[Union[str, Path]] = None, format: str = "toml"):
+        """
+        Save current configuration to file.
 
-        for config_file in possible_files:
-            if config_file.exists():
-                try:
-                    with open(config_file, 'r') as f:
-                        config_data = json.load(f)
+        Args:
+            path: Path to save configuration
+            format: File format (toml or json)
+        """
+        if not path:
+            path = Path.cwd() / f"ops0.{format}"
+        else:
+            path = Path(path)
 
-                    # Merge with current config
-                    loaded_config = Ops0Config.from_dict(config_data)
-                    self._merge_configs(loaded_config)
-
-                    self._loaded_from_file = True
-                    self._config_file_path = config_file
-                    break
-
-                except Exception as e:
-                    logging.warning(f"Failed to load config from {config_file}: {e}")
-
-    def _merge_configs(self, other_config: Ops0Config):
-        """Merge another configuration into current config"""
-        # This is a simplified merge - in production would be more sophisticated
-        other_dict = other_config.to_dict()
-        current_dict = self._config.to_dict()
-
-        def _merge_dicts(target, source):
-            for key, value in source.items():
-                if key in target and isinstance(target[key], dict) and isinstance(value, dict):
-                    _merge_dicts(target[key], value)
-                else:
-                    target[key] = value
-
-        _merge_dicts(current_dict, other_dict)
-        self._config = Ops0Config.from_dict(current_dict)
-
-    def save_config(self, file_path: Optional[Path] = None):
-        """Save current configuration to file"""
-        if file_path is None:
-            file_path = self._config_file_path or (Path.cwd() / ".ops0" / "config.json")
-
-        # Ensure directory exists
-        file_path.parent.mkdir(parents=True, exist_ok=True)
+        config_dict = {"ops0": self._config.to_dict()}
 
         try:
-            with open(file_path, 'w') as f:
-                json.dump(self._config.to_dict(), f, indent=2)
+            if format == "toml":
+                content = toml.dumps(config_dict)
+            elif format == "json":
+                content = json.dumps(config_dict, indent=2)
+            else:
+                raise ValueError(f"Unsupported format: {format}")
 
-            self._config_file_path = file_path
+            path.write_text(content)
+            logger.info(f"Configuration saved to {path}")
 
         except Exception as e:
-            raise ConfigurationError(f"Failed to save configuration: {e}")
-
-    def validate_config(self) -> List[str]:
-        """Validate current configuration"""
-        return self._config.validate()
-
-    def get_setting(self, path: str, default: Any = None) -> Any:
-        """Get a configuration setting by dot-separated path"""
-        parts = path.split('.')
-        current = self._config
-
-        try:
-            for part in parts:
-                current = getattr(current, part)
-            return current
-        except AttributeError:
-            return default
-
-    def set_setting(self, path: str, value: Any):
-        """Set a configuration setting by dot-separated path"""
-        parts = path.split('.')
-        current = self._config
-
-        try:
-            for part in parts[:-1]:
-                current = getattr(current, part)
-            setattr(current, parts[-1], value)
-        except AttributeError:
-            raise ConfigurationError(f"Invalid configuration path: {path}")
-
-    def reload_config(self):
-        """Reload configuration from all sources"""
-        self._config = Ops0Config()
-        self._load_from_environment()
-        self._load_from_file()
-
-    def get_config_summary(self) -> Dict[str, Any]:
-        """Get a summary of current configuration"""
-        return {
-            "project_name": self._config.project_name,
-            "environment": self._config.environment,
-            "loaded_from_file": self._loaded_from_file,
-            "config_file_path": str(self._config_file_path) if self._config_file_path else None,
-            "validation_errors": self.validate_config(),
-            "feature_flags": self._config.feature_flags,
-            "debug_mode": self._config.development.debug_mode,
-        }
+            raise ConfigurationError(f"Failed to save configuration to {path}: {e}")
 
 
 # Global configuration manager instance
-config_manager = ConfigManager()
+_config_manager = ConfigManager()
 
 
-# Convenience accessors
 def get_config() -> Ops0Config:
     """Get the global ops0 configuration"""
-    return config_manager.config
+    return _config_manager.config
 
 
-def get_execution_config() -> ExecutionConfig:
-    """Get execution configuration"""
-    return config_manager.config.execution
+def load_config(config_path: Optional[Union[str, Path]] = None) -> Ops0Config:
+    """Load configuration from file"""
+    return _config_manager.load_config(config_path)
 
 
-def get_storage_config() -> StorageConfig:
-    """Get storage configuration"""
-    return config_manager.config.storage
-
-
-def get_logging_config() -> LoggingConfig:
-    """Get logging configuration"""
-    return config_manager.config.logging
-
-
-def get_monitoring_config() -> MonitoringConfig:
-    """Get monitoring configuration"""
-    return config_manager.config.monitoring
-
-
-def get_validation_config() -> ValidationConfig:
-    """Get validation configuration"""
-    return config_manager.config.validation
-
-
-def get_development_config() -> DevelopmentConfig:
-    """Get development configuration"""
-    return config_manager.config.development
-
-
-def is_debug_mode() -> bool:
-    """Check if debug mode is enabled"""
-    return get_development_config().debug_mode
-
-
-def is_production() -> bool:
-    """Check if running in production environment"""
-    return get_config().environment == "production"
-
-
-def get_setting(path: str, default: Any = None) -> Any:
-    """Get a configuration setting by path"""
-    return config_manager.get_setting(path, default)
-
-
-def set_setting(path: str, value: Any):
-    """Set a configuration setting by path"""
-    config_manager.set_setting(path, value)
-
-
-def validate_config() -> List[str]:
-    """Validate current configuration"""
-    return config_manager.validate_config()
+def reset_config():
+    """Reset configuration to defaults"""
+    _config_manager._config = None
+    _config_manager.config_file_path = None
