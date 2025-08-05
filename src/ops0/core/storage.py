@@ -229,7 +229,7 @@ class StorageBackend(ABC):
 
 
 class LocalStorageBackend(StorageBackend):
-    """Local filesystem storage backend"""
+    """Local filesystem.py storage backend"""
 
     def __init__(self, base_path: Union[str, Path] = None):
         self.base_path = Path(base_path or config.storage.storage_path)
@@ -241,7 +241,7 @@ class LocalStorageBackend(StorageBackend):
 
     def _get_file_path(self, key: str) -> Path:
         """Get file path for a key"""
-        # Sanitize key for filesystem
+        # Sanitize key for filesystem.py
         safe_key = key.replace("/", "_").replace("\\", "_")
         return self.base_path / safe_key
 
@@ -251,7 +251,7 @@ class LocalStorageBackend(StorageBackend):
         return self.metadata_path / f"{safe_key}.meta.json"
 
     def store(self, key: str, data: bytes, metadata: StorageMetadata) -> None:
-        """Store data to local filesystem"""
+        """Store data to local filesystem.py"""
         try:
             file_path = self._get_file_path(key)
 
@@ -285,7 +285,7 @@ class LocalStorageBackend(StorageBackend):
             )
 
     def retrieve(self, key: str) -> bytes:
-        """Retrieve data from local filesystem"""
+        """Retrieve data from local filesystem.py"""
         try:
             file_path = self._get_file_path(key)
 

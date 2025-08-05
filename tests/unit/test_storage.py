@@ -19,7 +19,7 @@ from src.ops0.core.graph import PipelineGraph
 
 
 class TestLocalStorageBackend:
-    """Test the local filesystem storage backend"""
+    """Test the local filesystem.py storage backend"""
 
     def setup_method(self):
         """Setup temporary directory for each test"""
