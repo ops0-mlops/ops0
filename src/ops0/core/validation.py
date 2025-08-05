@@ -6,8 +6,7 @@ from typing import List, Dict, Set, Optional, Tuple
 from dataclasses import dataclass
 import logging
 
-from .graph import PipelineGraph, StepNode
-from .models import PipelineDefinition, StepDefinition
+from .graph import PipelineGraph
 from .exceptions import ValidationError, DependencyError
 
 logger = logging.getLogger(__name__)

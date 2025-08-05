@@ -16,15 +16,15 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 # Handle both development and production imports
 try:
     from ops0.core import PipelineGraph, run, deploy
-    from ops0.core.storage import storage
+    from ..core.storage import storage
     from ops0.__about__ import __version__
 except ImportError:
     # Development mode
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
-    from src.ops0.core.graph import PipelineGraph
-    from src.ops0.core.executor import run, deploy
-    from src.ops0.core.storage import storage
-    from src.ops0.__about__ import __version__
+    from .core.graph import PipelineGraph
+    from .core.executor import run, deploy
+    from .core.storage import storage
+    from .__about__ import __version__
 
 from .utils import (
     console,

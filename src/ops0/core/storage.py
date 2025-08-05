@@ -5,7 +5,6 @@ Transparent data passing between pipeline steps.
 Automatically handles serialization, compression, and storage backends.
 """
 
-import os
 import pickle
 import json
 import gzip

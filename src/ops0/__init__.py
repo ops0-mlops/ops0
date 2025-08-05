@@ -3,36 +3,36 @@ ops0 - Python-Native ML Pipeline Orchestration
 
 Write Python. Ship Production. Forget the Infrastructure.
 """
-from src.ops0.runtime.containers import container_orchestrator
+from .runtime.containers import container_orchestrator
 
 # Version import
 try:
     from ops0.__about__ import __version__
 except ImportError:
-    from src.ops0.__about__ import __version__
+    from .__about__ import __version__
 
 # Core imports - handle both development and installed package
 try:
     # When running as installed package
-    from ops0.core.decorators import step, pipeline
-    from ops0.core.storage import storage
-    from ops0.core.executor import run, deploy
-    from ops0.core.graph import get_current_pipeline
+    from ..core.decorators import step, pipeline
+    from ..core.storage import storage
+    from ..core.executor import run, deploy
+    from ..core.graph import get_current_pipeline
 except ImportError:
     # When running in development mode
-    from src.ops0.core.decorators import step, pipeline
-    from src.ops0.core.storage import storage
-    from src.ops0.core.executor import run, deploy
-    from src.ops0.core.graph import get_current_pipeline
+    from .core.decorators import step, pipeline
+    from .core.storage import storage
+    from .core.executor import run, deploy
+    from .core.graph import get_current_pipeline
 
 # Runtime imports (lazy loading for performance)
 def _import_runtime():
     """Lazy import runtime components to avoid heavy startup"""
     try:
         try:
-            from ops0.runtime.containers import container_orchestrator
+            from ..runtime.containers import container_orchestrator
         except ImportError:
-            from src.ops0.runtime.containers import container_orchestrator
+            from .runtime.containers import container_orchestrator
         return container_orchestrator
     except ImportError:
         return None

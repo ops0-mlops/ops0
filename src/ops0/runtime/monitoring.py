@@ -20,11 +20,11 @@ from typing import Dict, List, Optional, Any, Tuple, Callable, Deque
 
 # Handle imports for both development and production
 try:
-    from ops0.core.config import config
-    from ops0.core.storage import storage
+    from ..core.config import config
+    from ..core.storage import storage
 except ImportError:
-    from ...core.config import config
-    from ...core.storage import storage
+    from ..core.config import config
+    from ..core.storage import storage
 
 logger = logging.getLogger(__name__)
 

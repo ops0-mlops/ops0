@@ -35,14 +35,14 @@ console = Console(
 
 # Handle imports for both development and production
 try:
-    from ops0.core.graph import PipelineGraph
-    from ops0.core.storage import storage
+    from ..core.graph import PipelineGraph
+    from ..core.storage import storage
 except ImportError:
     # Development mode
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
     try:
-        from src.ops0.core.graph import PipelineGraph
-        from src.ops0.core.storage import storage
+        from .core.graph import PipelineGraph
+        from .core.storage import storage
     except ImportError:
         # Graceful fallback if core modules not available
         PipelineGraph = None

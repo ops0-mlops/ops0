@@ -21,15 +21,15 @@ from typing import Dict, List, Optional, Any, Tuple, Callable, Union
 
 # Handle imports for both development and production
 try:
-    from ops0.core.graph import PipelineGraph, StepNode
-    from ops0.core.storage import storage
-    from ops0.core.executor import ExecutionError
-    from ops0.core.config import config
+    from ..core.graph import PipelineGraph, StepNode
+    from ..core.storage import storage
+    from ..core.executor import ExecutionError
+    from ..core.config import config
 except ImportError:
-    from ...core.graph import PipelineGraph, StepNode
-    from ...core.storage import storage
-    from ...core.executor import ExecutionError
-    from ...core.config import config
+    from ..core.graph import PipelineGraph, StepNode
+    from ..core.storage import storage
+    from ..core.executor import ExecutionError
+    from ..core.config import config
 
 logger = logging.getLogger(__name__)
 

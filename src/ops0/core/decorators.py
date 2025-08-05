@@ -1,7 +1,7 @@
 import functools
 from typing import Callable, Optional
-from src.ops0.core.analyzer import FunctionAnalyzer
-from src.ops0.core.graph import PipelineGraph, StepNode
+from .analyzer import FunctionAnalyzer
+from .graph import PipelineGraph, StepNode
 
 
 class StepMetadata:

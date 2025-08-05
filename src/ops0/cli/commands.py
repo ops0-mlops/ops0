@@ -30,18 +30,18 @@ from .utils import (
 
 # Handle imports for both development and production
 try:
-    from ops0.core.graph import PipelineGraph
-    from ops0.core.executor import run, deploy
-    from ops0.core.storage import storage
-    from ops0.runtime.containers import container_orchestrator
+    from ..core.graph import PipelineGraph
+    from ..core.executor import run, deploy
+    from ..core.storage import storage
+    from ..runtime.containers import container_orchestrator
 except ImportError:
     # Development mode
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
     try:
-        from src.ops0.core.graph import PipelineGraph
-        from src.ops0.core.executor import run, deploy
-        from src.ops0.core.storage import storage
-        from src.ops0.runtime.containers import container_orchestrator
+        from .core.graph import PipelineGraph
+        from .core.executor import run, deploy
+        from .core.storage import storage
+        from .runtime.containers import container_orchestrator
     except ImportError:
         # Graceful fallback
         PipelineGraph = None

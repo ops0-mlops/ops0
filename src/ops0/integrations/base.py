@@ -210,7 +210,7 @@ class BaseIntegration(ABC):
 
     def register_model(self, model: Any, name: str, **kwargs) -> str:
         """Register model with ops0 registry"""
-        from ops0.core.registry import registry
+        from ..core.registry import registry
 
         wrapped = self.wrap_model(model)
         model_id = registry.register_model(
@@ -227,7 +227,7 @@ class BaseIntegration(ABC):
 
     def load_model(self, model_id: str) -> Any:
         """Load model from ops0 registry"""
-        from ops0.core.registry import registry
+        from ..core.registry import registry
 
         model_data = registry.load_model(model_id)
         return model_data

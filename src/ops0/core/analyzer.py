@@ -127,7 +127,28 @@ class FunctionAnalyzer:
     def _get_source_code(self) -> str:
         """Get the source code of the function"""
         try:
-            return inspect.getsource(self.func)
+            source = inspect.getsource(self.func)
+            # Fix indentation issues
+            lines = source.split('\n')
+            if lines:
+                # Find minimum indentation (excluding empty lines)
+                min_indent = float('inf')
+                for line in lines:
+                    if line.strip():  # Skip empty lines
+                        indent = len(line) - len(line.lstrip())
+                        min_indent = min(min_indent, indent)
+
+                # Remove minimum indentation from all lines
+                if min_indent < float('inf') and min_indent > 0:
+                    fixed_lines = []
+                    for line in lines:
+                        if len(line) >= min_indent:
+                            fixed_lines.append(line[min_indent:])
+                        else:
+                            fixed_lines.append(line)
+                    return '\n'.join(fixed_lines)
+
+            return source
         except OSError as e:
             raise StepError(
                 f"Could not retrieve source code for function '{self.func.__name__}'",
