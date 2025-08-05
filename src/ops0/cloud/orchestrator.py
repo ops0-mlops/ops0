@@ -1,5 +1,5 @@
 """
-ops0 Cloud Orchestrator
+ops0 Cloud Orchestrator - Enhanced Version
 
 Central orchestration for deploying ML pipelines across cloud providers.
 Handles the complete lifecycle: build, deploy, scale, monitor.
@@ -14,9 +14,10 @@ from typing import Dict, List, Optional, Any, Tuple, Callable
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from ..core.pipeline import PipelineGraph, PipelineStep
-from ..core.storage import StorageManager
+from ..core.graph import PipelineGraph, StepNode
+from ..core.storage import storage
 from ..core.config import config
+from ..runtime.containers import container_orchestrator
 from .base import (
     CloudProvider, CloudResource, DeploymentSpec,
     ResourceType, ResourceStatus
@@ -39,6 +40,7 @@ class DeploymentState:
         self.updated_at = datetime.now()
         self.error_message: Optional[str] = None
         self.deployment_id = self._generate_id()
+        self.endpoints: Dict[str, str] = {}  # Store endpoints
 
     def _generate_id(self) -> str:
         """Generate unique deployment ID"""
@@ -54,6 +56,31 @@ class DeploymentState:
         """Get resource for a step"""
         return self.resources.get(step_name)
 
+    def get_endpoint(self) -> str:
+        """Get the main endpoint for the deployment"""
+        # Return API gateway endpoint if available
+        if "api_gateway" in self.endpoints:
+            return self.endpoints["api_gateway"]
+
+        # Return load balancer endpoint if available
+        if "load_balancer" in self.endpoints:
+            return self.endpoints["load_balancer"]
+
+        # Return first available endpoint
+        if self.endpoints:
+            return list(self.endpoints.values())[0]
+
+        # Generate endpoint based on deployment
+        if self.resources:
+            first_resource = list(self.resources.values())[0]
+            return f"https://{self.deployment_id}.{first_resource.region}.ops0.run"
+
+        return "N/A"
+
+    def set_endpoint(self, name: str, url: str):
+        """Set an endpoint URL"""
+        self.endpoints[name] = url
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         return {
@@ -63,6 +90,8 @@ class DeploymentState:
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
             "error_message": self.error_message,
+            "endpoints": self.endpoints,
+            "endpoint": self.get_endpoint(),
             "resources": {
                 name: resource.to_dict()
                 for name, resource in self.resources.items()
@@ -79,7 +108,7 @@ class CloudOrchestrator:
         self.cost_estimator = CostEstimator(provider)
         self.autoscaler = AutoScaler(provider)
         self.monitor = CloudMonitor(provider)
-        self.storage = StorageManager()
+        self.storage = storage
 
         # Deployment configuration
         self.max_parallel_deployments = 5
@@ -99,54 +128,102 @@ class CloudOrchestrator:
 
         Args:
             pipeline_name: Name of the pipeline
-            pipeline: Pipeline graph (will load from storage if not provided)
-            environment: Environment variables for all steps
+            pipeline: PipelineGraph object (optional if already registered)
+            environment: Environment variables
             **kwargs: Additional deployment options
 
         Returns:
             DeploymentState with deployment information
         """
-        logger.info(f"Starting deployment of pipeline: {pipeline_name}")
-
         # Create deployment state
         deployment = DeploymentState(pipeline_name)
-        self.deployments[pipeline_name] = deployment
+        self.deployments[deployment.deployment_id] = deployment
 
         try:
-            # Load pipeline if not provided
-            if not pipeline:
-                pipeline = self._load_pipeline(pipeline_name)
+            # If pipeline not provided, try to load from registry
+            if pipeline is None:
+                # In practice, this would load from ops0 registry
+                raise ValueError("Pipeline object required for deployment")
 
-            # Validate pipeline
-            self._validate_pipeline(pipeline)
+            deployment.status = "deploying"
+            logger.info(f"Starting deployment: {deployment.deployment_id}")
 
-            # Build deployment specs for each step
-            deployment_specs = self._build_deployment_specs(
-                pipeline, environment, **kwargs
-            )
+            # Containerize pipeline steps
+            logger.info("Containerizing pipeline steps...")
+            container_specs = container_orchestrator.containerize_pipeline(pipeline)
 
-            # Deploy infrastructure resources first
-            self._deploy_infrastructure(deployment, pipeline, **kwargs)
+            # Deploy storage resources
+            logger.info("Setting up cloud storage...")
+            storage_resource = self._deploy_storage(pipeline_name)
+            deployment.add_resource("storage", storage_resource)
 
-            # Deploy pipeline steps in parallel where possible
-            self._deploy_steps(deployment, pipeline, deployment_specs)
+            # Deploy message queue
+            logger.info("Setting up message queue...")
+            queue_resource = self._deploy_queue(pipeline_name)
+            deployment.add_resource("queue", queue_resource)
 
-            # Configure networking and communication
-            self._configure_networking(deployment, pipeline)
+            # Deploy steps in parallel
+            logger.info("Deploying pipeline steps...")
+            with ThreadPoolExecutor(max_workers=self.max_parallel_deployments) as executor:
+                futures = {}
 
-            # Set up monitoring and alerting
-            self._setup_monitoring(deployment, pipeline)
+                for step_name, container_spec in container_specs.items():
+                    # Create deployment spec
+                    spec = DeploymentSpec(
+                        step_name=step_name,
+                        image=container_spec.image_tag,
+                        command=container_spec.entrypoint,
+                        environment={
+                            **container_spec.environment_vars,
+                            **(environment or {}),
+                            "OPS0_STORAGE_BUCKET": storage_resource.metadata.get("bucket_name", ""),
+                            "OPS0_QUEUE_URL": queue_resource.metadata.get("queue_url", ""),
+                        },
+                        cpu=container_spec.cpu_limit,
+                        memory=container_spec.memory_limit,
+                        gpu=1 if container_spec.needs_gpu else 0,
+                        min_instances=kwargs.get("min_instances", 1),
+                        max_instances=kwargs.get("max_instances", 10),
+                        timeout_seconds=kwargs.get("timeout", 300),
+                    )
 
-            # Validate deployment
-            self._validate_deployment(deployment)
+                    # Submit deployment
+                    future = executor.submit(self._deploy_step, spec)
+                    futures[future] = step_name
 
-            deployment.status = "active"
-            logger.info(f"Successfully deployed pipeline: {pipeline_name}")
+                # Wait for all deployments
+                for future in as_completed(futures):
+                    step_name = futures[future]
+                    try:
+                        resource = future.result()
+                        deployment.add_resource(step_name, resource)
+                        logger.info(f"Deployed step: {step_name}")
+                    except Exception as e:
+                        logger.error(f"Failed to deploy step {step_name}: {e}")
+                        deployment.error_message = str(e)
+                        raise
+
+            # Create API gateway / load balancer
+            logger.info("Setting up API gateway...")
+            api_resource = self._deploy_api_gateway(deployment)
+            deployment.add_resource("api_gateway", api_resource)
+            deployment.set_endpoint("api_gateway", api_resource.metadata.get("endpoint", ""))
+
+            # Configure monitoring
+            logger.info("Configuring monitoring...")
+            self.monitor.setup_monitoring(deployment)
+
+            # Configure auto-scaling
+            logger.info("Configuring auto-scaling...")
+            self.autoscaler.configure(deployment)
+
+            deployment.status = "deployed"
+            logger.info(f"Deployment completed: {deployment.deployment_id}")
 
         except Exception as e:
-            logger.error(f"Failed to deploy pipeline {pipeline_name}: {e}")
             deployment.status = "failed"
             deployment.error_message = str(e)
+            logger.error(f"Deployment failed: {e}")
 
             # Rollback on failure
             self._rollback_deployment(deployment)
@@ -154,562 +231,137 @@ class CloudOrchestrator:
 
         return deployment
 
-    def update(
-            self,
-            pipeline_name: str,
-            steps_to_update: Optional[List[str]] = None,
-            **kwargs
-    ) -> DeploymentState:
-        """
-        Update a deployed pipeline.
+    def _deploy_step(self, spec: DeploymentSpec) -> CloudResource:
+        """Deploy a single step"""
+        # Determine deployment type based on resource requirements
+        if spec.gpu > 0:
+            # Deploy as GPU-enabled container
+            return self.provider.deploy_container(spec)
+        elif spec.memory > 4096 or spec.cpu > 2:
+            # Deploy as high-memory container
+            return self.provider.deploy_container(spec)
+        else:
+            # Deploy as serverless function if supported
+            if hasattr(self.provider, 'deploy_function'):
+                return self.provider.deploy_function(spec)
+            else:
+                return self.provider.deploy_container(spec)
 
-        Args:
-            pipeline_name: Name of the pipeline
-            steps_to_update: Specific steps to update (all if None)
-            **kwargs: Update options
+    def _deploy_storage(self, pipeline_name: str) -> CloudResource:
+        """Deploy storage resources"""
+        storage_name = f"ops0-{pipeline_name}-{int(time.time())}"
+        return self.provider.create_storage(storage_name)
 
-        Returns:
-            Updated DeploymentState
-        """
-        deployment = self.deployments.get(pipeline_name)
-        if not deployment:
-            raise ValueError(f"No deployment found for pipeline: {pipeline_name}")
+    def _deploy_queue(self, pipeline_name: str) -> CloudResource:
+        """Deploy message queue"""
+        queue_name = f"ops0-{pipeline_name}-queue"
+        return self.provider.create_queue(queue_name)
 
-        logger.info(f"Updating pipeline deployment: {pipeline_name}")
-
-        try:
-            # Load latest pipeline definition
-            pipeline = self._load_pipeline(pipeline_name)
-
-            # Determine which steps need updating
-            if not steps_to_update:
-                steps_to_update = list(pipeline.steps.keys())
-
-            # Update each step
-            for step_name in steps_to_update:
-                if step_name not in deployment.resources:
-                    logger.warning(f"Step {step_name} not found in deployment")
-                    continue
-
-                step = pipeline.steps[step_name]
-                resource = deployment.resources[step_name]
-
-                # Build new spec
-                spec = self._build_step_spec(step, kwargs.get('environment', {}))
-
-                # Update resource
-                updated_resource = self.provider.update_resource(
-                    resource.resource_id, spec
-                )
-
-                deployment.add_resource(step_name, updated_resource)
-
-            deployment.status = "active"
-            deployment.updated_at = datetime.now()
-
-        except Exception as e:
-            logger.error(f"Failed to update pipeline {pipeline_name}: {e}")
-            deployment.status = "update_failed"
-            deployment.error_message = str(e)
-            raise
-
-        return deployment
-
-    def scale(
-            self,
-            pipeline_name: str,
-            min_instances: int = 1,
-            max_instances: int = 10,
-            target_metrics: Optional[Dict[str, float]] = None
-    ) -> Dict[str, Any]:
-        """
-        Configure auto-scaling for a pipeline.
-
-        Args:
-            pipeline_name: Name of the pipeline
-            min_instances: Minimum instances per step
-            max_instances: Maximum instances per step
-            target_metrics: Target metrics for scaling
-
-        Returns:
-            Scaling configuration
-        """
-        deployment = self.deployments.get(pipeline_name)
-        if not deployment:
-            raise ValueError(f"No deployment found for pipeline: {pipeline_name}")
-
-        # Default target metrics
-        if not target_metrics:
-            target_metrics = {
-                "cpu_percent": 70.0,
-                "memory_percent": 80.0,
-                "request_rate": 1000.0
-            }
-
-        # Configure auto-scaling for each resource
-        scaling_config = {}
-
+    def _deploy_api_gateway(self, deployment: DeploymentState) -> CloudResource:
+        """Deploy API gateway or load balancer"""
+        # Get step endpoints
+        step_endpoints = {}
         for step_name, resource in deployment.resources.items():
             if resource.resource_type in [ResourceType.CONTAINER, ResourceType.FUNCTION]:
-                config = self.autoscaler.configure_scaling(
-                    resource,
-                    min_instances=min_instances,
-                    max_instances=max_instances,
-                    target_metrics=target_metrics
-                )
-                scaling_config[step_name] = config
+                endpoint = resource.metadata.get("endpoint", "")
+                if endpoint:
+                    step_endpoints[step_name] = endpoint
 
-        return scaling_config
-
-    def monitor(self, pipeline_name: str) -> str:
-        """
-        Get monitoring dashboard URL for a pipeline.
-
-        Args:
-            pipeline_name: Name of the pipeline
-
-        Returns:
-            Dashboard URL
-        """
-        deployment = self.deployments.get(pipeline_name)
-        if not deployment:
-            raise ValueError(f"No deployment found for pipeline: {pipeline_name}")
-
-        # Create monitoring dashboard
-        dashboard_url = self.monitor.create_dashboard(
-            pipeline_name,
-            list(deployment.resources.values())
-        )
-
-        return dashboard_url
-
-    def estimate_cost(
-            self,
-            pipeline_name: str,
-            monthly_requests: int = 1000000,
-            average_duration_ms: int = 100
-    ) -> Dict[str, Any]:
-        """
-        Estimate monthly cost for a pipeline.
-
-        Args:
-            pipeline_name: Name of the pipeline
-            monthly_requests: Expected requests per month
-            average_duration_ms: Average request duration
-
-        Returns:
-            Cost breakdown
-        """
-        deployment = self.deployments.get(pipeline_name)
-        if deployment:
-            # Estimate based on deployed resources
-            resources = list(deployment.resources.values())
+        # Create API gateway
+        if hasattr(self.provider, 'create_api_gateway'):
+            return self.provider.create_api_gateway(
+                name=f"ops0-{deployment.pipeline_name}-api",
+                routes=step_endpoints
+            )
         else:
-            # Estimate based on pipeline definition
-            pipeline = self._load_pipeline(pipeline_name)
-            resources = self._estimate_resources(pipeline)
-
-        # Get cost estimate
-        cost_breakdown = self.cost_estimator.estimate(
-            resources,
-            usage_patterns={
-                "monthly_requests": monthly_requests,
-                "average_duration_ms": average_duration_ms
-            }
-        )
-
-        return cost_breakdown
-
-    def delete(self, pipeline_name: str) -> bool:
-        """
-        Delete a deployed pipeline.
-
-        Args:
-            pipeline_name: Name of the pipeline
-
-        Returns:
-            Success status
-        """
-        deployment = self.deployments.get(pipeline_name)
-        if not deployment:
-            logger.warning(f"No deployment found for pipeline: {pipeline_name}")
-            return True
-
-        logger.info(f"Deleting pipeline deployment: {pipeline_name}")
-
-        # Delete all resources
-        success = True
-        for step_name, resource in deployment.resources.items():
-            try:
-                if not self.provider.delete_resource(resource.resource_id):
-                    success = False
-                    logger.error(f"Failed to delete resource for step: {step_name}")
-            except Exception as e:
-                success = False
-                logger.error(f"Error deleting resource for step {step_name}: {e}")
-
-        # Clean up monitoring
-        try:
-            self.monitor.delete_dashboard(pipeline_name)
-        except Exception as e:
-            logger.warning(f"Failed to delete monitoring dashboard: {e}")
-
-        # Remove from tracking
-        if success:
-            del self.deployments[pipeline_name]
-
-        return success
-
-    def get_status(self, pipeline_name: str) -> Dict[str, Any]:
-        """
-        Get detailed status of a deployed pipeline.
-
-        Args:
-            pipeline_name: Name of the pipeline
-
-        Returns:
-            Status information
-        """
-        deployment = self.deployments.get(pipeline_name)
-        if not deployment:
-            return {"status": "not_deployed"}
-
-        # Get status for each resource
-        step_statuses = {}
-        for step_name, resource in deployment.resources.items():
-            status = self.provider.get_resource_status(resource.resource_id)
-            metrics = self.provider.get_resource_metrics(resource.resource_id)
-
-            step_statuses[step_name] = {
-                "status": status.value,
-                "resource_type": resource.resource_type.value,
-                "metrics": {
-                    "cpu_percent": metrics.cpu_percent,
-                    "memory_mb": metrics.memory_mb,
-                    "request_count": metrics.request_count,
-                    "error_count": metrics.error_count,
-                    "average_latency_ms": metrics.average_latency_ms
-                }
-            }
-
-        return {
-            "pipeline_name": pipeline_name,
-            "deployment_id": deployment.deployment_id,
-            "status": deployment.status,
-            "created_at": deployment.created_at.isoformat(),
-            "updated_at": deployment.updated_at.isoformat(),
-            "provider": self.provider.name,
-            "steps": step_statuses,
-            "dashboard_url": self.monitor.get_dashboard_url(pipeline_name)
-        }
-
-    def list_deployments(self) -> List[Dict[str, Any]]:
-        """List all deployments"""
-        deployments = []
-
-        for name, deployment in self.deployments.items():
-            deployments.append({
-                "pipeline_name": name,
-                "deployment_id": deployment.deployment_id,
-                "status": deployment.status,
-                "created_at": deployment.created_at.isoformat(),
-                "provider": self.provider.name,
-                "resource_count": len(deployment.resources)
-            })
-
-        return deployments
-
-    # Private helper methods
-
-    def _load_pipeline(self, pipeline_name: str) -> PipelineGraph:
-        """Load pipeline from storage"""
-        # In production, this would load from ops0 storage
-        # For now, create a mock pipeline
-        from ..core.pipeline import PipelineGraph, PipelineStep
-
-        pipeline = PipelineGraph(name=pipeline_name)
-
-        # Add mock steps
-        steps = [
-            PipelineStep(
-                name="preprocess",
-                func=lambda x: x,  # Placeholder
-                inputs=["raw_data"],
-                outputs=["processed_data"]
-            ),
-            PipelineStep(
-                name="predict",
-                func=lambda x: x,  # Placeholder
-                inputs=["processed_data"],
-                outputs=["predictions"]
-            )
-        ]
-
-        for step in steps:
-            pipeline.add_step(step)
-
-        return pipeline
-
-    def _validate_pipeline(self, pipeline: PipelineGraph):
-        """Validate pipeline can be deployed"""
-        if not pipeline.steps:
-            raise ValueError("Pipeline has no steps")
-
-        # Check for cycles
-        try:
-            pipeline.build_execution_order()
-        except Exception as e:
-            raise ValueError(f"Invalid pipeline structure: {e}")
-
-    def _build_deployment_specs(
-            self,
-            pipeline: PipelineGraph,
-            environment: Optional[Dict[str, str]],
-            **kwargs
-    ) -> Dict[str, DeploymentSpec]:
-        """Build deployment specifications for each step"""
-        specs = {}
-
-        for step_name, step in pipeline.steps.items():
-            spec = self._build_step_spec(step, environment, **kwargs)
-            specs[step_name] = spec
-
-        return specs
-
-    def _build_step_spec(
-            self,
-            step: PipelineStep,
-            environment: Optional[Dict[str, str]],
-            **kwargs
-    ) -> DeploymentSpec:
-        """Build deployment spec for a single step"""
-        # Default container image
-        image = kwargs.get('image', f"ops0/runtime:latest")
-
-        # Merge environments
-        step_env = {}
-        if environment:
-            step_env.update(environment)
-
-        # Add step-specific environment
-        step_env.update({
-            "OPS0_STEP_NAME": step.name,
-            "OPS0_PIPELINE_NAME": kwargs.get('pipeline_name', 'unknown')
-        })
-
-        # Determine resource requirements
-        cpu = kwargs.get('cpu', 1.0)
-        memory = kwargs.get('memory', 2048)
-        gpu = kwargs.get('gpu', 0)
-
-        # Auto-detect GPU needs from step metadata
-        if hasattr(step, 'requires_gpu') and step.requires_gpu:
-            gpu = max(gpu, 1)
-
-        spec = DeploymentSpec(
-            step_name=step.name,
-            image=image,
-            command=["python", "-m", "ops0.runtime.worker", step.name],
-            environment=step_env,
-            cpu=cpu,
-            memory=memory,
-            gpu=gpu,
-            min_instances=kwargs.get('min_instances', 1),
-            max_instances=kwargs.get('max_instances', 10),
-            spot_instances=kwargs.get('spot_instances', False)
-        )
-
-        return spec
-
-    def _deploy_infrastructure(
-            self,
-            deployment: DeploymentState,
-            pipeline: PipelineGraph,
-            **kwargs
-    ):
-        """Deploy infrastructure resources (storage, queues, etc)"""
-        # Create shared storage
-        storage_resource = self.provider.create_storage(
-            name=f"{pipeline.name}-storage",
-            region=self.provider.regions[0]
-        )
-        deployment.add_resource("_storage", storage_resource)
-
-        # Create message queue for step communication
-        queue_resource = self.provider.create_queue(
-            name=f"{pipeline.name}-queue",
-            region=self.provider.regions[0]
-        )
-        deployment.add_resource("_queue", queue_resource)
-
-        # Store secrets if provided
-        secrets = kwargs.get('secrets', {})
-        for secret_name, secret_value in secrets.items():
-            secret_resource = self.provider.create_secret(
-                name=f"{pipeline.name}-{secret_name}",
-                value=secret_value,
-                region=self.provider.regions[0]
-            )
-            deployment.add_resource(f"_secret_{secret_name}", secret_resource)
-
-    def _deploy_steps(
-            self,
-            deployment: DeploymentState,
-            pipeline: PipelineGraph,
-            deployment_specs: Dict[str, DeploymentSpec]
-    ):
-        """Deploy pipeline steps in optimal order"""
-        # Get execution order
-        execution_order = pipeline.build_execution_order()
-
-        # Deploy steps level by level
-        for level in execution_order:
-            # Deploy steps in parallel within each level
-            with ThreadPoolExecutor(max_workers=self.max_parallel_deployments) as executor:
-                futures = {}
-
-                for step_name in level:
-                    spec = deployment_specs[step_name]
-
-                    # Determine deployment type
-                    if self._should_use_serverless(spec):
-                        future = executor.submit(
-                            self.provider.deploy_function, spec
-                        )
-                    else:
-                        future = executor.submit(
-                            self.provider.deploy_container, spec
-                        )
-
-                    futures[future] = step_name
-
-                # Wait for deployments to complete
-                for future in as_completed(futures, timeout=self.deployment_timeout):
-                    step_name = futures[future]
-
-                    try:
-                        resource = future.result()
-                        deployment.add_resource(step_name, resource)
-                        logger.info(f"Deployed step: {step_name}")
-
-                    except Exception as e:
-                        logger.error(f"Failed to deploy step {step_name}: {e}")
-                        raise
-
-    def _should_use_serverless(self, spec: DeploymentSpec) -> bool:
-        """Determine if step should use serverless deployment"""
-        # Use serverless for:
-        # - Steps with low memory requirements
-        # - Steps without GPU requirements
-        # - Steps that don't need persistent connections
-
-        if spec.gpu > 0:
-            return False
-
-        if spec.memory > 3008:  # Lambda max memory
-            return False
-
-        if spec.port:  # Needs persistent connections
-            return False
-
-        return True
-
-    def _configure_networking(
-            self,
-            deployment: DeploymentState,
-            pipeline: PipelineGraph
-    ):
-        """Configure networking between deployed resources"""
-        # In production, this would:
-        # - Set up service discovery
-        # - Configure load balancers
-        # - Set up VPC peering if needed
-        # - Configure firewall rules
-
-        logger.info("Configuring networking for pipeline")
-
-    def _setup_monitoring(
-            self,
-            deployment: DeploymentState,
-            pipeline: PipelineGraph
-    ):
-        """Set up monitoring and alerting"""
-        # Create monitoring dashboard
-        resources = list(deployment.resources.values())
-
-        dashboard_url = self.monitor.create_dashboard(
-            pipeline.name,
-            resources
-        )
-
-        # Set up alerts
-        alert_config = {
-            "error_rate_threshold": 0.05,  # 5% error rate
-            "latency_threshold_ms": 1000,  # 1 second
-            "cpu_threshold_percent": 80,
-            "memory_threshold_percent": 90
-        }
-
-        self.monitor.setup_alerts(
-            pipeline.name,
-            resources,
-            alert_config
-        )
-
-        logger.info(f"Monitoring dashboard: {dashboard_url}")
-
-    def _validate_deployment(self, deployment: DeploymentState):
-        """Validate deployment is healthy"""
-        unhealthy_steps = []
-
-        for step_name, resource in deployment.resources.items():
-            if step_name.startswith("_"):  # Skip infrastructure resources
-                continue
-
-            # Wait for resource to be running
-            success = self.provider.wait_for_status(
-                resource.resource_id,
-                ResourceStatus.RUNNING,
-                timeout_seconds=120
-            )
-
-            if not success:
-                unhealthy_steps.append(step_name)
-
-        if unhealthy_steps:
-            raise RuntimeError(
-                f"Deployment validation failed. Unhealthy steps: {unhealthy_steps}"
+            # Fallback to load balancer
+            return self.provider.create_load_balancer(
+                name=f"ops0-{deployment.pipeline_name}-lb",
+                targets=list(step_endpoints.values())
             )
 
     def _rollback_deployment(self, deployment: DeploymentState):
         """Rollback failed deployment"""
-        logger.info(f"Rolling back deployment: {deployment.pipeline_name}")
+        logger.info(f"Rolling back deployment: {deployment.deployment_id}")
 
-        for step_name, resource in list(deployment.resources.items()):
+        for resource_name, resource in deployment.resources.items():
             try:
-                self.provider.delete_resource(resource.resource_id)
-                logger.info(f"Rolled back resource: {step_name}")
+                self.provider.delete_resource(resource)
+                logger.info(f"Deleted resource: {resource_name}")
             except Exception as e:
-                logger.error(f"Failed to rollback resource {step_name}: {e}")
+                logger.error(f"Failed to delete resource {resource_name}: {e}")
 
-    def _estimate_resources(self, pipeline: PipelineGraph) -> List[CloudResource]:
-        """Estimate resources for cost calculation"""
-        resources = []
+    def scale(self, pipeline_name: str, min_instances: int, max_instances: int) -> bool:
+        """Configure auto-scaling for a deployed pipeline"""
+        # Find deployment
+        deployment = self._find_deployment(pipeline_name)
+        if not deployment:
+            raise ValueError(f"No deployment found for pipeline: {pipeline_name}")
 
-        for step_name, step in pipeline.steps.items():
-            # Create mock resource for estimation
-            resource = CloudResource(
-                provider=self.provider.name,
-                resource_type=ResourceType.CONTAINER,
-                resource_id=f"estimate-{step_name}",
-                resource_name=step_name,
-                region=self.provider.regions[0],
-                metadata={
-                    "cpu": 1,
-                    "memory": 2048,
-                    "gpu": 0
-                }
+        # Update scaling configuration
+        return self.autoscaler.update_scaling(
+            deployment,
+            min_instances=min_instances,
+            max_instances=max_instances
+        )
+
+    def monitor(self, pipeline_name: str) -> str:
+        """Get monitoring dashboard URL"""
+        deployment = self._find_deployment(pipeline_name)
+        if not deployment:
+            raise ValueError(f"No deployment found for pipeline: {pipeline_name}")
+
+        return self.monitor.get_dashboard_url(deployment)
+
+    def estimate_cost(self, pipeline_name: str, monthly_requests: int) -> Dict[str, float]:
+        """Estimate monthly cost for a pipeline"""
+        deployment = self._find_deployment(pipeline_name)
+        if deployment:
+            # Use actual deployment
+            return self.cost_estimator.estimate_from_deployment(
+                deployment,
+                monthly_requests
             )
-            resources.append(resource)
+        else:
+            # Estimate from pipeline definition
+            return self.cost_estimator.estimate_from_pipeline(
+                pipeline_name,
+                monthly_requests
+            )
 
-        return resources
+    def _find_deployment(self, pipeline_name: str) -> Optional[DeploymentState]:
+        """Find deployment by pipeline name"""
+        for deployment in self.deployments.values():
+            if deployment.pipeline_name == pipeline_name:
+                return deployment
+        return None
+
+    def list_deployments(self) -> List[Dict[str, Any]]:
+        """List all deployments"""
+        return [
+            deployment.to_dict()
+            for deployment in self.deployments.values()
+        ]
+
+    def get_deployment(self, deployment_id: str) -> Optional[DeploymentState]:
+        """Get deployment by ID"""
+        return self.deployments.get(deployment_id)
+
+    def delete_deployment(self, deployment_id: str) -> bool:
+        """Delete a deployment"""
+        deployment = self.deployments.get(deployment_id)
+        if not deployment:
+            return False
+
+        try:
+            # Delete all resources
+            for resource in deployment.resources.values():
+                self.provider.delete_resource(resource)
+
+            # Remove from tracking
+            del self.deployments[deployment_id]
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to delete deployment: {e}")
+            return False

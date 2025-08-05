@@ -1,70 +1,223 @@
 """
 ops0 Pipeline Executor
 
-Executes pipeline steps locally and coordinates production deployments.
-Supports parallel execution, retry logic, and comprehensive monitoring.
+Executes pipeline steps locally or in distributed environments.
+Handles both development and production deployment scenarios.
 """
 
 import time
-import threading
-import traceback
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List, Any, Optional, Callable, Union
-from dataclasses import dataclass
-from contextlib import contextmanager
 import logging
+import traceback
+from typing import Dict, List, Optional, Any, Union
+from dataclasses import dataclass, field
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
+import threading
+import os
 
-from .graph import PipelineGraph, StepNode, get_current_pipeline
-from .storage import storage, StorageNamespace
-from .exceptions import ExecutionError, StepError, PipelineError
+from .graph import PipelineGraph, StepNode
+from .storage import storage, with_namespace
+from .exceptions import ExecutionError, StepError, StorageError
 from .config import config
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class ExecutionResult:
-    """Result of pipeline execution"""
+class StepExecutionContext:
+    """Context for step execution"""
     pipeline_name: str
-    success: bool
-    total_steps: int
-    completed_steps: int
-    failed_steps: List[str]
-    execution_time: float
-    step_results: Dict[str, Any]
-    errors: Dict[str, Exception]
-
-    @property
-    def success_rate(self) -> float:
-        """Calculate success rate as percentage"""
-        if self.total_steps == 0:
-            return 100.0
-        return (self.completed_steps / self.total_steps) * 100.0
+    step_name: str
+    execution_id: str
+    retry_count: int = 0
+    namespace: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
-class StepExecutionContext:
-    """Context for step execution"""
-    step_name: str
+class ExecutionResult:
+    """Result of pipeline execution"""
+    success: bool
     pipeline_name: str
     execution_id: str
-    retry_count: int = 0
-    start_time: Optional[float] = None
+    completed_steps: int
+    total_steps: int
+    failed_steps: List[str] = field(default_factory=list)
+    step_results: Dict[str, Any] = field(default_factory=dict)
+    errors: Dict[str, Exception] = field(default_factory=dict)
+    execution_time: float = 0.0
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self):
-        if self.start_time is None:
-            self.start_time = time.time()
+
+# Thread-local storage for execution context
+_execution_context = threading.local()
 
 
-class StepExecutor:
-    """Executes individual pipeline steps"""
+@contextmanager
+def execution_context(context: StepExecutionContext):
+    """Context manager for step execution"""
+    _execution_context.context = context
+    try:
+        yield context
+    finally:
+        if hasattr(_execution_context, 'context'):
+            delattr(_execution_context, 'context')
 
-    def __init__(self, storage_namespace: str = None):
-        self.storage_namespace = storage_namespace
 
-    def execute_step(self, step: StepNode, context: StepExecutionContext) -> Any:
+class PipelineExecutor:
+    """Executes pipeline steps in the correct order"""
+
+    def __init__(self, max_workers: Optional[int] = None):
+        self.max_workers = max_workers or config.execution.max_parallel_steps
+
+    def execute(self, pipeline: PipelineGraph, mode: str = "sequential") -> ExecutionResult:
         """
-        Execute a single step with error handling and monitoring.
+        Execute a pipeline.
+
+        Args:
+            pipeline: Pipeline to execute
+            mode: Execution mode (sequential, parallel)
+
+        Returns:
+            ExecutionResult with details
+        """
+        # Validate pipeline first
+        pipeline.validate()
+
+        # Generate execution ID
+        execution_id = f"{pipeline.name}_{int(time.time())}"
+        logger.info(f"Starting pipeline execution: {execution_id}")
+
+        # Initialize result
+        result = ExecutionResult(
+            success=True,
+            pipeline_name=pipeline.name,
+            execution_id=execution_id,
+            completed_steps=0,
+            total_steps=len(pipeline.steps)
+        )
+
+        # Reset execution state
+        pipeline.reset_execution_state()
+
+        # Create execution namespace for storage isolation
+        namespace = f"exec_{execution_id}"
+
+        start_time = time.time()
+
+        try:
+            if mode == "sequential":
+                self._execute_sequential(pipeline, result, execution_id, namespace)
+            elif mode == "parallel":
+                self._execute_parallel(pipeline, result, execution_id, namespace)
+            else:
+                raise ValueError(f"Unknown execution mode: {mode}")
+
+        except Exception as e:
+            result.success = False
+            logger.error(f"Pipeline execution failed: {str(e)}")
+
+        finally:
+            result.execution_time = time.time() - start_time
+
+        # Log execution summary
+        self._log_execution_summary(result)
+
+        return result
+
+    def _execute_sequential(self, pipeline: PipelineGraph, result: ExecutionResult,
+                          execution_id: str, namespace: str) -> None:
+        """Execute steps sequentially"""
+        execution_order = pipeline.get_execution_order()
+
+        for step_name in execution_order:
+            step = pipeline.steps[step_name]
+            context = StepExecutionContext(
+                pipeline_name=pipeline.name,
+                step_name=step_name,
+                execution_id=execution_id,
+                namespace=namespace
+            )
+
+            try:
+                with with_namespace(namespace):
+                    step_result = self._execute_step(step, context)
+                    result.step_results[step_name] = step_result
+                    result.completed_steps += 1
+
+            except Exception as e:
+                result.success = False
+                result.failed_steps.append(step_name)
+                result.errors[step_name] = e
+
+                if not config.execution.continue_on_failure:
+                    raise
+
+    def _execute_parallel(self, pipeline: PipelineGraph, result: ExecutionResult,
+                         execution_id: str, namespace: str) -> None:
+        """Execute steps in parallel where possible"""
+        completed_steps = set()
+        pending_steps = set(pipeline.steps.keys())
+
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = {}
+
+            while pending_steps:
+                # Find steps ready to execute
+                ready_steps = [
+                    step_name for step_name in pending_steps
+                    if pipeline.steps[step_name].can_execute(completed_steps)
+                ]
+
+                if not ready_steps and futures:
+                    # Wait for at least one future to complete
+                    done, _ = as_completed(futures, timeout=None)
+                    for future in done:
+                        step_name = futures[future]
+                        try:
+                            step_result = future.result()
+                            result.step_results[step_name] = step_result
+                            result.completed_steps += 1
+                            completed_steps.add(step_name)
+                        except Exception as e:
+                            result.success = False
+                            result.failed_steps.append(step_name)
+                            result.errors[step_name] = e
+                            if not config.execution.continue_on_failure:
+                                raise
+                        del futures[future]
+                        pending_steps.remove(step_name)
+
+                elif not ready_steps and not futures:
+                    # Deadlock - no steps can execute
+                    raise ExecutionError(
+                        "Pipeline execution deadlock - no steps can execute",
+                        context={"pending": list(pending_steps)}
+                    )
+
+                # Submit ready steps for execution
+                for step_name in ready_steps:
+                    step = pipeline.steps[step_name]
+                    context = StepExecutionContext(
+                        pipeline_name=pipeline.name,
+                        step_name=step_name,
+                        execution_id=execution_id,
+                        namespace=namespace
+                    )
+
+                    future = executor.submit(self._execute_step_with_namespace,
+                                           step, context, namespace)
+                    futures[future] = step_name
+
+    def _execute_step_with_namespace(self, step: StepNode, context: StepExecutionContext,
+                                    namespace: str) -> Any:
+        """Execute step within a storage namespace"""
+        with with_namespace(namespace):
+            return self._execute_step(step, context)
+
+    def _execute_step(self, step: StepNode, context: StepExecutionContext) -> Any:
+        """
+        Execute a single step.
 
         Args:
             step: Step to execute
@@ -83,7 +236,7 @@ class StepExecutor:
             step_args, step_kwargs = self._prepare_step_arguments(step, context)
 
             # Execute the step function
-            with self._step_storage_context(context):
+            with execution_context(context):
                 result = step.func(*step_args, **step_kwargs)
 
             # Record success
@@ -131,219 +284,32 @@ class StepExecutor:
                 # This is simplified - in practice, we'd map storage keys to parameter names
                 try:
                     data = storage.load(dep.key)
-                    # For now, just pass as positional argument
-                    # In practice, we'd map to the correct parameter name
-                    step_args.append(data)
-                except Exception as e:
-                    logger.warning(f"Could not load dependency '{dep.key}' for step '{step.name}': {e}")
+                    step_kwargs[dep.key] = data
+                except StorageError:
+                    logger.warning(f"Could not load dependency '{dep.key}' for step '{step.name}'")
 
         return step_args, step_kwargs
 
-    @contextmanager
-    def _step_storage_context(self, context: StepExecutionContext):
-        """Create storage context for step execution"""
-        namespace = f"{context.pipeline_name}:{context.execution_id}"
-        if self.storage_namespace:
-            namespace = f"{self.storage_namespace}:{namespace}"
-
-        with StorageNamespace(namespace):
-            yield
-
-
-class PipelineExecutor:
-    """Executes complete pipelines with parallel support"""
-
-    def __init__(self, max_workers: int = None, enable_retries: bool = True):
-        self.max_workers = max_workers or config.execution.max_parallel_steps
-        self.enable_retries = enable_retries
-        self.step_executor = StepExecutor()
-
-    def execute(self, pipeline: PipelineGraph, execution_id: str = None) -> ExecutionResult:
-        """
-        Execute a complete pipeline.
-
-        Args:
-            pipeline: Pipeline to execute
-            execution_id: Unique execution identifier
-
-        Returns:
-            Execution result with detailed information
-        """
-        if not execution_id:
-            execution_id = f"exec_{int(time.time())}"
-
-        logger.info(f"Starting pipeline '{pipeline.name}' execution (ID: {execution_id})")
-
-        # Validate pipeline before execution
-        pipeline.validate()
-
-        # Reset execution state
-        pipeline.reset_execution_state()
-
-        # Get execution plan
-        parallel_groups = pipeline.get_parallel_groups()
-
-        # Initialize result tracking
-        start_time = time.time()
-        step_results = {}
-        errors = {}
-        completed_steps = 0
-        failed_steps = []
-
-        try:
-            # Execute each parallel group
-            for group_idx, step_group in enumerate(parallel_groups):
-                logger.info(f"Executing parallel group {group_idx + 1}/{len(parallel_groups)}: {step_group}")
-
-                group_results = self._execute_parallel_group(
-                    pipeline, step_group, execution_id
-                )
-
-                # Process group results
-                for step_name, result in group_results.items():
-                    if isinstance(result, Exception):
-                        errors[step_name] = result
-                        failed_steps.append(step_name)
-
-                        # Stop execution on failure if not configured to continue
-                        if not config.execution.continue_on_failure:
-                            raise ExecutionError(
-                                f"Pipeline execution stopped due to step failure: {step_name}",
-                                step_name=step_name
-                            )
-                    else:
-                        step_results[step_name] = result
-                        completed_steps += 1
-
-            execution_time = time.time() - start_time
-            success = len(failed_steps) == 0
-
-            logger.info(f"Pipeline '{pipeline.name}' completed in {execution_time:.2f}s "
-                       f"({completed_steps}/{len(pipeline.steps)} steps succeeded)")
-
-            return ExecutionResult(
-                pipeline_name=pipeline.name,
-                success=success,
-                total_steps=len(pipeline.steps),
-                completed_steps=completed_steps,
-                failed_steps=failed_steps,
-                execution_time=execution_time,
-                step_results=step_results,
-                errors=errors
+    def _log_execution_summary(self, result: ExecutionResult) -> None:
+        """Log execution summary"""
+        if result.success:
+            logger.info(
+                f"Pipeline '{result.pipeline_name}' completed successfully: "
+                f"{result.completed_steps}/{result.total_steps} steps in {result.execution_time:.2f}s"
+            )
+        else:
+            logger.error(
+                f"Pipeline '{result.pipeline_name}' failed: "
+                f"{result.completed_steps}/{result.total_steps} steps completed, "
+                f"{len(result.failed_steps)} failed"
             )
 
-        except Exception as e:
-            execution_time = time.time() - start_time
 
-            logger.error(f"Pipeline '{pipeline.name}' failed after {execution_time:.2f}s: {str(e)}")
+# Public API functions
 
-            return ExecutionResult(
-                pipeline_name=pipeline.name,
-                success=False,
-                total_steps=len(pipeline.steps),
-                completed_steps=completed_steps,
-                failed_steps=failed_steps,
-                execution_time=execution_time,
-                step_results=step_results,
-                errors=errors
-            )
-
-    def _execute_parallel_group(
-        self,
-        pipeline: PipelineGraph,
-        step_names: List[str],
-        execution_id: str
-    ) -> Dict[str, Union[Any, Exception]]:
-        """Execute a group of steps in parallel"""
-
-        if len(step_names) == 1:
-            # Single step - execute directly
-            step_name = step_names[0]
-            step = pipeline.steps[step_name]
-            context = StepExecutionContext(step_name, pipeline.name, execution_id)
-
-            try:
-                result = self._execute_step_with_retry(step, context)
-                return {step_name: result}
-            except Exception as e:
-                return {step_name: e}
-
-        # Multiple steps - use thread pool
-        results = {}
-
-        with ThreadPoolExecutor(max_workers=min(len(step_names), self.max_workers)) as executor:
-            # Submit all steps
-            future_to_step = {}
-            for step_name in step_names:
-                step = pipeline.steps[step_name]
-                context = StepExecutionContext(step_name, pipeline.name, execution_id)
-
-                future = executor.submit(self._execute_step_with_retry, step, context)
-                future_to_step[future] = step_name
-
-            # Collect results
-            for future in as_completed(future_to_step):
-                step_name = future_to_step[future]
-                try:
-                    result = future.result()
-                    results[step_name] = result
-                except Exception as e:
-                    results[step_name] = e
-
-        return results
-
-    def _execute_step_with_retry(self, step: StepNode, context: StepExecutionContext) -> Any:
-        """Execute step with retry logic"""
-        max_retries = config.execution.max_retries if self.enable_retries else 0
-
-        last_error = None
-
-        for attempt in range(max_retries + 1):
-            context.retry_count = attempt
-
-            try:
-                return self.step_executor.execute_step(step, context)
-            except Exception as e:
-                last_error = e
-
-                if attempt < max_retries:
-                    retry_delay = config.execution.retry_delay_seconds * (2 ** attempt)  # Exponential backoff
-                    logger.warning(f"Step '{step.name}' failed (attempt {attempt + 1}), "
-                                 f"retrying in {retry_delay}s...")
-                    time.sleep(retry_delay)
-                else:
-                    logger.error(f"Step '{step.name}' failed after {attempt + 1} attempts")
-
-        raise last_error
-
-
-# High-level execution functions
-
-def run(pipeline: PipelineGraph = None, local: bool = True) -> ExecutionResult:
+def run(pipeline: PipelineGraph) -> ExecutionResult:
     """
-    Run a pipeline locally or in production.
-
-    Args:
-        pipeline: Pipeline to run (uses current context if None)
-        local: Whether to run locally (True) or deploy to production (False)
-
-    Returns:
-        Execution result
-    """
-    if pipeline is None:
-        pipeline = get_current_pipeline()
-        if pipeline is None:
-            raise PipelineError("No pipeline found in current context")
-
-    if local:
-        return run_local(pipeline)
-    else:
-        return deploy(pipeline)
-
-
-def run_local(pipeline: PipelineGraph) -> ExecutionResult:
-    """
-    Run pipeline locally with full logging and debugging.
+    Run pipeline locally.
 
     Args:
         pipeline: Pipeline to execute
@@ -374,100 +340,224 @@ def run_local(pipeline: PipelineGraph) -> ExecutionResult:
     return result
 
 
-def deploy(pipeline: PipelineGraph, environment: str = "production") -> Dict[str, Any]:
+def deploy(pipeline: PipelineGraph, target: str = "auto", **kwargs) -> Dict[str, Any]:
     """
     Deploy pipeline to production environment.
 
     Args:
         pipeline: Pipeline to deploy
-        environment: Target environment
+        target: Deployment target (auto, local, docker, cloud, k8s)
+        **kwargs: Additional deployment options
 
     Returns:
         Deployment information
     """
-    logger.info(f"Deploying pipeline '{pipeline.name}' to {environment}")
+    logger.info(f"Deploying pipeline '{pipeline.name}' to {target}")
 
     # Validate pipeline for production
     pipeline.validate()
 
-    # For now, this is a placeholder - in practice, this would:
-    # 1. Package the pipeline into containers
-    # 2. Deploy to cloud infrastructure
-    # 3. Set up monitoring and alerting
-    # 4. Return deployment details
-
     deployment_info = {
         "pipeline_name": pipeline.name,
-        "environment": environment,
         "deployment_id": f"deploy_{int(time.time())}",
-        "status": "deployed",
-        "endpoint": f"https://api.ops0.xyz/pipelines/{pipeline.name}",
-        "steps": list(pipeline.steps.keys()),
-        "deployed_at": time.time(),
+        "target": target,
+        "timestamp": time.time(),
     }
 
-    logger.info(f"✅ Pipeline '{pipeline.name}' deployed successfully!")
-    logger.info(f"   • Deployment ID: {deployment_info['deployment_id']}")
-    logger.info(f"   • Endpoint: {deployment_info['endpoint']}")
-    logger.info(f"   • Steps: {len(deployment_info['steps'])}")
+    try:
+        # Auto-detect best deployment target
+        if target == "auto":
+            target = _detect_deployment_target()
+            deployment_info["target"] = target
+
+        if target == "local":
+            deployment_info.update(_deploy_local(pipeline, **kwargs))
+
+        elif target == "docker":
+            # Use existing container orchestrator
+            from ..runtime.containers import container_orchestrator
+            deployment_info.update(_deploy_docker(pipeline, container_orchestrator, **kwargs))
+
+        elif target == "cloud":
+            # Use existing cloud orchestrator
+            from ..cloud import orchestrator as cloud_orchestrator
+            deployment_info.update(_deploy_cloud(pipeline, cloud_orchestrator, **kwargs))
+
+        elif target == "k8s":
+            deployment_info.update(_deploy_kubernetes(pipeline, **kwargs))
+
+        else:
+            raise ValueError(f"Unknown deployment target: {target}")
+
+        deployment_info["status"] = "deployed"
+        deployment_info["success"] = True
+
+        logger.info(f"✅ Pipeline '{pipeline.name}' deployed successfully to {target}!")
+        logger.info(f"   • Deployment ID: {deployment_info['deployment_id']}")
+        logger.info(f"   • Endpoint: {deployment_info.get('endpoint', 'N/A')}")
+
+    except Exception as e:
+        deployment_info["status"] = "failed"
+        deployment_info["success"] = False
+        deployment_info["error"] = str(e)
+
+        logger.error(f"❌ Deployment failed: {str(e)}")
+        raise
 
     return deployment_info
 
 
-# Pipeline execution context manager
-@contextmanager
-def execution_context(pipeline_name: str = "default"):
-    """Create an execution context for a pipeline"""
-    original_namespace = storage.namespace
-    storage.namespace = pipeline_name
+def _detect_deployment_target() -> str:
+    """Detect the best deployment target based on environment"""
+    # Check for Kubernetes
+    if os.getenv("KUBERNETES_SERVICE_HOST"):
+        return "k8s"
 
+    # Check for cloud providers
+    if os.getenv("AWS_DEFAULT_REGION") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"):
+        return "cloud"
+
+    if os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCP_PROJECT"):
+        return "cloud"
+
+    if os.getenv("AZURE_SUBSCRIPTION_ID"):
+        return "cloud"
+
+    # Check for Docker
     try:
-        yield
-    finally:
-        storage.namespace = original_namespace
+        import docker
+        client = docker.from_env()
+        client.ping()
+        return "docker"
+    except:
+        pass
+
+    # Default to local
+    return "local"
 
 
-# Utility functions for monitoring and debugging
-
-def get_execution_status(pipeline: PipelineGraph) -> Dict[str, Any]:
-    """Get current execution status of a pipeline"""
-    status = {
-        "pipeline_name": pipeline.name,
-        "total_steps": len(pipeline.steps),
-        "step_status": {},
-        "overall_status": "unknown"
+def _deploy_local(pipeline: PipelineGraph, **kwargs) -> Dict[str, Any]:
+    """Deploy pipeline locally for development"""
+    return {
+        "deployment_type": "local",
+        "endpoint": f"http://localhost:8000/pipelines/{pipeline.name}",
+        "steps": list(pipeline.steps.keys()),
+        "message": "Pipeline running locally. Use 'ops0 run' to execute."
     }
 
-    completed = 0
-    running = 0
-    failed = 0
 
-    for step_name, step in pipeline.steps.items():
-        status["step_status"][step_name] = {
-            "status": step.status,
-            "execution_time": step.execution_time,
-            "error": str(step.error) if step.error else None
-        }
+def _deploy_docker(pipeline: PipelineGraph, container_orchestrator, **kwargs) -> Dict[str, Any]:
+    """Deploy pipeline as Docker containers"""
+    logger.info("Containerizing pipeline steps...")
 
-        if step.status == "completed":
-            completed += 1
-        elif step.status == "running":
-            running += 1
-        elif step.status == "failed":
-            failed += 1
+    # Containerize all steps
+    container_specs = container_orchestrator.containerize_pipeline(pipeline)
 
-    # Determine overall status
-    if failed > 0:
-        status["overall_status"] = "failed"
-    elif running > 0:
-        status["overall_status"] = "running"
-    elif completed == len(pipeline.steps):
-        status["overall_status"] = "completed"
-    else:
-        status["overall_status"] = "pending"
+    # Generate deployment manifest
+    manifest = container_orchestrator.get_container_manifest()
 
-    status["completed_steps"] = completed
-    status["running_steps"] = running
-    status["failed_steps"] = failed
+    # Build and push containers if requested
+    if kwargs.get("build", True):
+        for step_name, spec in container_specs.items():
+            logger.info(f"Building container for step: {step_name}")
+            if os.getenv("OPS0_BUILD_CONTAINERS", "false").lower() == "true":
+                container_orchestrator.builder.build_container(spec, push=kwargs.get("push", False))
 
-    return status
+    # Export Docker Compose file
+    compose_file = "docker-compose.yml"
+    if kwargs.get("compose", True):
+        compose_file = container_orchestrator.export_compose_file(pipeline.name, compose_file)
+
+    deployment_info = {
+        "deployment_type": "docker",
+        "containers": list(container_specs.keys()),
+        "manifest": manifest,
+        "compose_file": compose_file,
+        "endpoint": f"http://localhost:8080/pipelines/{pipeline.name}",
+        "message": f"Run 'docker-compose up' to start the pipeline"
+    }
+
+    return deployment_info
+
+
+def _deploy_cloud(pipeline: PipelineGraph, cloud_orchestrator, **kwargs) -> Dict[str, Any]:
+    """Deploy pipeline to cloud provider"""
+    # Determine provider
+    provider = kwargs.get("provider")
+    if not provider:
+        # Auto-detect from environment
+        if os.getenv("AWS_DEFAULT_REGION"):
+            provider = "aws"
+        elif os.getenv("GOOGLE_CLOUD_PROJECT"):
+            provider = "gcp"
+        elif os.getenv("AZURE_SUBSCRIPTION_ID"):
+            provider = "azure"
+        else:
+            provider = "aws"  # Default
+
+    logger.info(f"Deploying to cloud provider: {provider}")
+
+    # Deploy using cloud orchestrator
+    deployment_state = cloud_orchestrator.deploy(
+        pipeline_name=pipeline.name,
+        pipeline=pipeline,
+        environment=kwargs.get("environment", {}),
+        **kwargs
+    )
+
+    # Convert deployment state to our format
+    return {
+        "deployment_type": "cloud",
+        "provider": provider,
+        "deployment_id": deployment_state.deployment_id,
+        "endpoint": deployment_state.get_endpoint() if hasattr(deployment_state, 'get_endpoint') else "N/A",
+        "resources": {
+            step: resource.to_dict()
+            for step, resource in deployment_state.resources.items()
+        },
+        "status": deployment_state.status,
+        "message": f"Pipeline deployed to {provider.upper()}"
+    }
+
+
+def _deploy_kubernetes(pipeline: PipelineGraph, **kwargs) -> Dict[str, Any]:
+    """Deploy pipeline to Kubernetes cluster"""
+    logger.info("Deploying to Kubernetes...")
+
+    # Use Kubernetes provider from cloud module
+    from ..cloud.kubernetes import KubernetesProvider
+
+    k8s_provider = KubernetesProvider()
+
+    # Deploy each step
+    resources = {}
+    for step_name, step_node in pipeline.steps.items():
+        # Create deployment spec
+        from ..cloud.base import DeploymentSpec
+        spec = DeploymentSpec(
+            step_name=step_name,
+            image=f"ops0/{pipeline.name}-{step_name}:latest",
+            cpu=1.0,
+            memory=2048,
+            min_instances=kwargs.get("min_instances", 1),
+            max_instances=kwargs.get("max_instances", 10)
+        )
+
+        # Deploy
+        resource = k8s_provider.deploy_container(spec)
+        resources[step_name] = resource
+
+    return {
+        "deployment_type": "kubernetes",
+        "namespace": kwargs.get("namespace", "ops0"),
+        "resources": {name: res.to_dict() for name, res in resources.items()},
+        "endpoint": f"http://ops0-{pipeline.name}.{kwargs.get('namespace', 'ops0')}.svc.cluster.local",
+        "message": "Pipeline deployed to Kubernetes cluster"
+    }
+
+
+# Convenience functions
+
+def run_local(pipeline: PipelineGraph) -> ExecutionResult:
+    """Alias for run() - run pipeline locally"""
+    return run(pipeline)
