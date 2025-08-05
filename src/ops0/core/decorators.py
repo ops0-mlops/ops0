@@ -1,7 +1,7 @@
 import functools
 from typing import Callable, Optional
 from .analyzer import FunctionAnalyzer
-from .graph import PipelineGraph, StepNode
+from .graph import PipelineGraph, StepNode, logger
 
 
 class StepMetadata:
@@ -51,7 +51,7 @@ def step(func: Callable) -> Callable:
         # Register step in current pipeline
         current_pipeline = PipelineGraph.get_current()
         if current_pipeline:
-            step_node = StepNode(metadata)
+            step_node = StepNode(metadata.name, metadata.func, metadata.analyzer)
             current_pipeline.add_step(step_node)
 
         # Execute the original function
@@ -66,39 +66,32 @@ def step(func: Callable) -> Callable:
 
 
 def pipeline(name: Optional[str] = None):
-    """
-    Define a pipeline context for grouping steps.
-
-    Args:
-        name: Optional pipeline name
-
-    Example:
-        with ops0.pipeline("fraud-detection"):
-            @ops0.step
-            def preprocess():
-                pass
-
-            @ops0.step
-            def predict():
-                pass
-    """
-
+    if name is not None and not isinstance(name, str):
+        raise ValueError("Le nom du pipeline doit être une chaîne de caractères")
+        
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             pipeline_name = name or func.__name__
-
-            with PipelineGraph(pipeline_name):
+            current = PipelineGraph.get_current()
+            
+            if current:
+                # Déjà dans un contexte de pipeline
                 return func(*args, **kwargs)
-
+                
+            try:
+                with PipelineGraph(pipeline_name) as pipeline:
+                    result = func(*args, **kwargs)
+                    return result
+            except Exception as e:
+                logger.error(f"Erreur dans le pipeline {pipeline_name}: {e}")
+                raise
+                
         wrapper._ops0_pipeline = True
         return wrapper
-
+        
     if callable(name):
-        # Used as @pipeline without parentheses
         func = name
         name = None
         return decorator(func)
-    else:
-        # Used as @pipeline("name") or @pipeline()
-        return decorator
+    return decorator
