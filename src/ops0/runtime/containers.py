@@ -1,35 +1,49 @@
+"""
+ops0 Runtime Containers
+
+Automatic containerization for ML pipeline steps.
+Zero configuration needed - just write Python!
+"""
+
 import ast
-import inspect
 import hashlib
+import inspect
+import json
+import logging
 import os
 import subprocess
 import tempfile
-import sys
-from typing import List, Dict, Set, Optional, Tuple, Any
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Optional, Set, Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class ContainerSpec:
     """Specification for a containerized step"""
     step_name: str
-    base_image: str
+    image_tag: str
+    dockerfile_content: str
     requirements: List[str]
     system_packages: List[str]
-    python_version: str
-    needs_gpu: bool
-    memory_limit: str
-    cpu_limit: str
-    dockerfile_content: str
-    image_tag: str
+    base_image: str
+    memory_limit: str = "2Gi"
+    cpu_limit: str = "1"
+    needs_gpu: bool = False
+    environment_vars: Dict[str, str] = None
+
+    def __post_init__(self):
+        if self.environment_vars is None:
+            self.environment_vars = {}
 
 
-class ImportAnalyzer:
+class FunctionAnalyzer:
     """
-    Analyzes Python code to extract all dependencies automatically.
+    Analyzes Python functions to detect dependencies and requirements.
 
-    This is the magic that makes ops0 build containers without requirements.txt!
+    Uses AST parsing to understand what a function needs.
     """
 
     def __init__(self, func: callable):
@@ -124,84 +138,197 @@ class RequirementsGenerator:
     """
 
     def __init__(self):
-        self.standard_lib = self._get_standard_library_modules()
-
-    def _get_standard_library_modules(self) -> Set[str]:
-        """Get list of Python standard library modules"""
-        # Simplified list - in production this would be more comprehensive
-        return {
-            'os', 'sys', 'json', 'pickle', 'time', 'datetime', 'math',
-            'random', 'collections', 'itertools', 'functools', 'threading',
-            'multiprocessing', 'subprocess', 'pathlib', 'tempfile', 'shutil',
-            'urllib', 'http', 're', 'ast', 'inspect', 'hashlib', 'base64'
+        # Map of import names to pip packages
+        self.import_to_package = {
+            'sklearn': 'scikit-learn==1.3.0',
+            'cv2': 'opencv-python==4.8.0',
+            'PIL': 'Pillow==10.0.0',
+            'yaml': 'PyYAML==6.0.1',
+            'bs4': 'beautifulsoup4==4.12.2',
+            'dotenv': 'python-dotenv==1.0.0',
+            'jwt': 'PyJWT==2.8.0',
+            'sqlalchemy': 'SQLAlchemy==2.0.19',
+            'fastapi': 'fastapi==0.101.0',
+            'uvicorn': 'uvicorn==0.23.2',
+            'pydantic': 'pydantic==2.1.1',
+            'httpx': 'httpx==0.24.1',
+            'redis': 'redis==4.6.0',
+            'psycopg2': 'psycopg2-binary==2.9.7',
+            'motor': 'motor==3.2.0',
+            'aiohttp': 'aiohttp==3.8.5',
+            'requests': 'requests==2.31.0',
+            'boto3': 'boto3==1.28.17',
+            'google': 'google-cloud-storage==2.10.0',
+            'azure': 'azure-storage-blob==12.17.0',
         }
 
-    def generate_requirements(self, imports: Set[str]) -> List[str]:
-        """Convert imports to pip installable packages"""
+        # Standard library modules (don't need pip install)
+        self.stdlib_modules = {
+            'os', 'sys', 'time', 'datetime', 'json', 're', 'math',
+            'random', 'collections', 'itertools', 'functools',
+            'pathlib', 'typing', 'logging', 'asyncio', 'subprocess',
+            'threading', 'multiprocessing', 'queue', 'socket',
+            'urllib', 'http', 'email', 'csv', 'sqlite3', 'pickle',
+            'copy', 'shutil', 'tempfile', 'glob', 'fnmatch',
+            'hashlib', 'hmac', 'secrets', 'uuid', 'platform',
+            'argparse', 'configparser', 'enum', 'dataclasses'
+        }
+
+    def generate_from_imports(self, imports: Set[str]) -> List[str]:
+        """Generate requirements list from imports"""
         requirements = []
 
-        # Package name mappings
-        package_mappings = {
-            'sklearn': 'scikit-learn>=1.3.0',
-            'cv2': 'opencv-python>=4.8.0',
-            'PIL': 'Pillow>=10.0.0',
-            'yaml': 'PyYAML>=6.0',
-            'bs4': 'beautifulsoup4>=4.12.0',
-            'requests': 'requests>=2.31.0',
-            'numpy': 'numpy>=1.24.0',
-            'pandas': 'pandas>=2.0.0',
-            'matplotlib': 'matplotlib>=3.7.0',
-            'seaborn': 'seaborn>=0.12.0',
-            'plotly': 'plotly>=5.15.0',
-            'torch': 'torch>=2.0.0',
-            'tensorflow': 'tensorflow>=2.13.0',
-            'keras': 'keras>=2.13.0',
-            'xgboost': 'xgboost>=1.7.0',
-            'lightgbm': 'lightgbm>=4.0.0',
-            'catboost': 'catboost>=1.2.0',
-            'scipy': 'scipy>=1.11.0',
-            'statsmodels': 'statsmodels>=0.14.0'
-        }
-
         for import_name in imports:
-            if import_name not in self.standard_lib:
-                if import_name in package_mappings:
-                    requirements.append(package_mappings[import_name])
-                else:
-                    # Default version constraint
-                    requirements.append(f"{import_name}>=0.1.0")
+            # Skip standard library
+            if import_name in self.stdlib_modules:
+                continue
+
+            # Check if we have a known mapping
+            if import_name in self.import_to_package:
+                requirements.append(self.import_to_package[import_name])
+            else:
+                # Default: assume import name is package name
+                # In production, we'd check PyPI
+                requirements.append(f"{import_name}==*")
 
         # Always include ops0
-        requirements.append("ops0>=0.1.0")
+        requirements.append("ops0")
 
         return sorted(list(set(requirements)))
 
+    def detect_system_packages(self, ml_frameworks: Set[str]) -> List[str]:
+        """Detect system packages needed"""
+        system_packages = []
 
-class DockerfileBuilder:
+        # Basic build tools
+        system_packages.extend(['build-essential', 'python3-dev'])
+
+        # Framework-specific system dependencies
+        if 'opencv-python' in str(ml_frameworks):
+            system_packages.extend(['libgl1-mesa-glx', 'libglib2.0-0'])
+
+        if 'scipy' in ml_frameworks or 'scikit-learn' in ml_frameworks:
+            system_packages.extend(['gfortran', 'libopenblas-dev', 'liblapack-dev'])
+
+        if 'matplotlib' in ml_frameworks or 'seaborn' in ml_frameworks:
+            system_packages.append('libfreetype6-dev')
+
+        return list(set(system_packages))
+
+
+class ContainerBuilder:
     """
-    Builds optimized Dockerfiles for each step automatically.
+    Builds optimized containers for each pipeline step.
 
-    Creates lightweight, cached, secure containers.
+    Handles all the Docker complexity automatically.
     """
 
     def __init__(self):
-        self.python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+        self.analyzer = None
+        self.requirements_gen = RequirementsGenerator()
+        self.built_images = set()
 
-    def build_dockerfile(self, spec: ContainerSpec) -> str:
-        """Generate optimized Dockerfile for the step"""
+    def containerize_step(self, step_metadata: Dict[str, Any]) -> ContainerSpec:
+        """
+        Create container specification for a step.
 
-        # Choose base image based on requirements
-        if spec.needs_gpu:
-            base_image = f"python:{self.python_version}-slim-gpu"
-        elif any('torch' in req or 'tensorflow' in req for req in spec.requirements):
-            base_image = f"python:{self.python_version}-slim"
-        else:
-            base_image = f"python:{self.python_version}-alpine"
+        This is where the magic happens - analyzing code and
+        creating optimized containers automatically.
+        """
+        step_name = step_metadata.get("name", "unknown")
+        func = step_metadata.get("func")
 
-        dockerfile = f"""
-# Auto-generated Dockerfile for ops0 step: {spec.step_name}
-# Generated on: $(date)
-# ops0 version: 0.1.0
+        print(f"📦 Analyzing step: {step_name}")
+
+        # Analyze function
+        self.analyzer = FunctionAnalyzer(func)
+        imports = self.analyzer.get_imports()
+        ml_frameworks = self.analyzer.get_ml_frameworks()
+        needs_gpu = self.analyzer.needs_gpu()
+        memory_limit = self.analyzer.estimate_memory_needs()
+
+        print(f"  📊 Detected imports: {imports}")
+        print(f"  🤖 ML frameworks: {ml_frameworks}")
+        print(f"  🎮 GPU required: {needs_gpu}")
+        print(f"  💾 Memory estimate: {memory_limit}")
+
+        # Generate requirements
+        requirements = self.requirements_gen.generate_from_imports(imports)
+        system_packages = self.requirements_gen.detect_system_packages(ml_frameworks)
+
+        # Select base image
+        base_image = self._select_base_image(ml_frameworks, needs_gpu)
+
+        # Generate Dockerfile
+        dockerfile_content = self._generate_dockerfile(
+            base_image=base_image,
+            step_name=step_name,
+            requirements=requirements,
+            system_packages=system_packages,
+            needs_gpu=needs_gpu
+        )
+
+        # Create unique image tag
+        content_hash = hashlib.sha256(
+            f"{step_name}{requirements}{system_packages}".encode()
+        ).hexdigest()[:8]
+
+        image_tag = f"ops0/{step_name.lower()}:{content_hash}"
+
+        spec = ContainerSpec(
+            step_name=step_name,
+            image_tag=image_tag,
+            dockerfile_content=dockerfile_content,
+            requirements=requirements,
+            system_packages=system_packages,
+            base_image=base_image,
+            memory_limit=memory_limit,
+            cpu_limit="2" if needs_gpu else "1",
+            needs_gpu=needs_gpu,
+            environment_vars={
+                "OPS0_STEP_NAME": step_name,
+                "OPS0_RUNTIME_MODE": "container"
+            }
+        )
+
+        print(f"  ✅ Container spec created: {image_tag}")
+
+        return spec
+
+    def _select_base_image(self, ml_frameworks: Set[str], needs_gpu: bool) -> str:
+        """Select optimal base image for the step"""
+        # GPU-optimized images
+        if needs_gpu:
+            if 'torch' in ml_frameworks:
+                return "pytorch/pytorch:2.0.1-cuda11.7-cudnn8-runtime"
+            elif 'tensorflow' in ml_frameworks:
+                return "tensorflow/tensorflow:2.13.0-gpu"
+            else:
+                return "nvidia/cuda:11.7.1-runtime-ubuntu22.04"
+
+        # CPU-optimized images
+        if 'torch' in ml_frameworks:
+            return "pytorch/pytorch:2.0.1-cpu-py3.10"
+        elif 'tensorflow' in ml_frameworks:
+            return "tensorflow/tensorflow:2.13.0"
+        elif ml_frameworks:  # Any ML framework
+            return "python:3.10-slim-bullseye"
+        else:  # Minimal
+            return "python:3.10-alpine"
+
+    def _generate_dockerfile(
+            self,
+            base_image: str,
+            step_name: str,
+            requirements: List[str],
+            system_packages: List[str],
+            needs_gpu: bool
+    ) -> str:
+        """Generate optimized Dockerfile content"""
+
+        dockerfile = f"""# ops0 Auto-generated Dockerfile
+# Step: {step_name}
+# Generated at: {os.environ.get('BUILD_TIME', 'runtime')}
 
 FROM {base_image}
 
@@ -209,141 +336,57 @@ FROM {base_image}
 WORKDIR /app
 
 # Install system dependencies
-{self._generate_system_packages(spec.system_packages)}
+"""
 
-# Copy requirements and install Python dependencies
+        if system_packages and 'alpine' not in base_image:
+            dockerfile += f"""RUN apt-get update && apt-get install -y --no-install-recommends \\
+    {' '.join(system_packages)} \\
+    && rm -rf /var/lib/apt/lists/*
+"""
+        elif system_packages and 'alpine' in base_image:
+            # Alpine uses apk
+            alpine_packages = [p.replace('build-essential', 'build-base') for p in system_packages]
+            dockerfile += f"""RUN apk add --no-cache \\
+    {' '.join(alpine_packages)}
+"""
+
+        # Install Python dependencies
+        if requirements:
+            dockerfile += f"""
+# Install Python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \\
-    pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+"""
 
+        # Add the step code
+        dockerfile += f"""
 # Copy step code
 COPY step_function.py .
 COPY ops0_runtime.py .
 
 # Set environment variables
-ENV PYTHONPATH=/app
-ENV OPS0_STEP_NAME={spec.step_name}
-ENV OPS0_RUNTIME_MODE=container
+ENV PYTHONUNBUFFERED=1
+ENV OPS0_CONTAINER=1
+"""
 
-# Resource limits
-ENV MEMORY_LIMIT={spec.memory_limit}
-ENV CPU_LIMIT={spec.cpu_limit}
+        if needs_gpu:
+            dockerfile += """ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+"""
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \\
-    CMD python -c "import ops0; print('healthy')" || exit 1
-
+        # Set entrypoint
+        dockerfile += """
 # Run the step
-CMD ["python", "ops0_runtime.py"]
-""".strip()
+ENTRYPOINT ["python", "ops0_runtime.py"]
+"""
 
         return dockerfile
 
-    def _generate_system_packages(self, packages: List[str]) -> str:
-        """Generate system package installation commands"""
-        if not packages:
-            return "# No additional system packages needed"
+    def build_container(self, spec: ContainerSpec, push: bool = False) -> str:
+        """Build container from specification"""
+        print(f"\n🐳 Building container: {spec.image_tag}")
 
-        if 'alpine' in packages:  # Alpine Linux
-            return f"RUN apk add --no-cache {' '.join(packages)}"
-        else:  # Debian/Ubuntu
-            return f"""RUN apt-get update && \\
-    apt-get install -y --no-install-recommends {' '.join(packages)} && \\
-    apt-get clean && \\
-    rm -rf /var/lib/apt/lists/*"""
-
-
-class ContainerBuilder:
-    """
-    Main container orchestration engine.
-
-    Transforms ops0 steps into production-ready containers automatically.
-    """
-
-    def __init__(self, registry_url: str = "ghcr.io/ops0"):
-        self.registry_url = registry_url
-        self.requirements_gen = RequirementsGenerator()
-        self.dockerfile_builder = DockerfileBuilder()
-
-    def containerize_step(self, step_metadata) -> ContainerSpec:
-        """
-        Transform a step into a container specification.
-
-        This is where the magic happens - automatic containerization!
-        """
-        print(f"🐳 Containerizing step: {step_metadata.name}")
-
-        # Analyze the function
-        analyzer = ImportAnalyzer(step_metadata.func)
-        imports = analyzer.get_imports()
-        ml_frameworks = analyzer.get_ml_frameworks()
-        needs_gpu = analyzer.needs_gpu()
-        memory_limit = analyzer.estimate_memory_needs()
-
-        # Generate requirements
-        requirements = self.requirements_gen.generate_requirements(imports)
-
-        # Determine system packages needed
-        system_packages = self._determine_system_packages(ml_frameworks)
-
-        # Generate image tag
-        source_hash = hashlib.sha256(
-            step_metadata.analyzer.source.encode()
-        ).hexdigest()[:12]
-        image_tag = f"{self.registry_url}/{step_metadata.name}:{source_hash}"
-
-        # Create container spec
-        spec = ContainerSpec(
-            step_name=step_metadata.name,
-            base_image="python:3.11-slim",
-            requirements=requirements,
-            system_packages=system_packages,
-            python_version="3.11",
-            needs_gpu=needs_gpu,
-            memory_limit=memory_limit,
-            cpu_limit="1000m",
-            dockerfile_content="",  # Will be generated
-            image_tag=image_tag
-        )
-
-        # Generate Dockerfile
-        spec.dockerfile_content = self.dockerfile_builder.build_dockerfile(spec)
-
-        print(f"  📦 Requirements: {len(requirements)} packages")
-        print(f"  🧠 Memory limit: {memory_limit}")
-        print(f"  🔧 GPU support: {'Yes' if needs_gpu else 'No'}")
-        print(f"  🏷️  Image tag: {image_tag}")
-
-        return spec
-
-    def _determine_system_packages(self, ml_frameworks: Set[str]) -> List[str]:
-        """Determine system packages needed based on ML frameworks"""
-        packages = []
-
-        if 'opencv-python' in ml_frameworks:
-            packages.extend(['libglib2.0-0', 'libsm6', 'libxext6', 'libxrender-dev'])
-
-        if any(fw in ml_frameworks for fw in ['matplotlib', 'seaborn', 'plotly']):
-            packages.extend(['libfreetype6-dev', 'libpng-dev'])
-
-        if 'scipy' in ml_frameworks:
-            packages.extend(['gfortran', 'libopenblas-dev'])
-
-        return packages
-
-    def build_container(self, spec: ContainerSpec, push: bool = True) -> str:
-        """
-        Build the Docker container for a step.
-
-        Args:
-            spec: Container specification
-            push: Whether to push to registry
-
-        Returns:
-            Built image tag
-        """
-        print(f"🔨 Building container: {spec.step_name}")
-
+        # Create temporary build directory
         with tempfile.TemporaryDirectory() as build_dir:
             build_path = Path(build_dir)
 
@@ -353,40 +396,42 @@ class ContainerBuilder:
                 f.write(spec.dockerfile_content)
 
             # Write requirements.txt
-            requirements_path = build_path / "requirements.txt"
-            with open(requirements_path, 'w') as f:
-                f.write('\n'.join(spec.requirements))
+            if spec.requirements:
+                req_path = build_path / "requirements.txt"
+                with open(req_path, 'w') as f:
+                    f.write('\n'.join(spec.requirements))
 
-            # Write step function
+            # Write step function (placeholder)
             step_code = self._generate_step_code(spec)
-            step_path = build_path / "step_function.py"
-            with open(step_path, 'w') as f:
+            with open(build_path / "step_function.py", 'w') as f:
                 f.write(step_code)
 
             # Write runtime wrapper
             runtime_code = self._generate_runtime_wrapper(spec)
-            runtime_path = build_path / "ops0_runtime.py"
-            with open(runtime_path, 'w') as f:
+            with open(build_path / "ops0_runtime.py", 'w') as f:
                 f.write(runtime_code)
 
-            # Build Docker image
+            # Build container
             build_cmd = [
                 "docker", "build",
                 "-t", spec.image_tag,
-                "--build-arg", f"PYTHON_VERSION={spec.python_version}",
-                str(build_path)
+                "--platform", "linux/amd64",
+                "."
             ]
 
-            print(f"  🔧 Running: {' '.join(build_cmd)}")
+            print(f"  🔨 Running: {' '.join(build_cmd)}")
 
             try:
                 result = subprocess.run(
                     build_cmd,
+                    cwd=build_path,
                     capture_output=True,
                     text=True,
                     check=True
                 )
+
                 print(f"  ✅ Build successful!")
+                self.built_images.add(spec.image_tag)
 
                 if push:
                     self._push_container(spec.image_tag)
