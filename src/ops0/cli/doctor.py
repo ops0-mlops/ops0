@@ -1,592 +1,295 @@
-"""
-ops0 CLI Doctor
+# ops0/cli/doctor.py
+"""Doctor command for ops0 - system diagnostics and health checks."""
 
-Diagnostic and validation utilities for ops0 installations and projects.
-"""
-
-import os
 import sys
-import subprocess
-import importlib.util
-from pathlib import Path
-from typing import Dict, List, Tuple, Any, Optional
 import platform
-
-from rich.table import Table
+import os
+from pathlib import Path
+from typing import Dict, Tuple, List
+import typer
+from rich.console import Console
 from rich.panel import Panel
-from rich.text import Text
+from rich.table import Table
+from rich import box
+
+from ..core import get_version
+from ..core.config import Config
+from ..core.storage import LocalStorage
+from ..runtime.docker import DockerRuntime
+from ..runtime.kubernetes import KubernetesRuntime
 
 from .utils import (
-    console,
     check_dependencies,
-    validate_project_structure,
-    get_system_info,
+    check_docker,
+    check_kubernetes,
+    format_status_table,
+    print_error,
+    print_success,
+    print_warning,
+    print_info,
+    get_project_root
 )
-from .config import config
 
+console = Console()
+doctor_app = typer.Typer(help="Run system diagnostics")
 
-class Ops0Doctor:
-    """Comprehensive diagnostic tool for ops0 installations and projects"""
 
-    def __init__(self):
-        self.checks = []
-        self.warnings = []
-        self.errors = []
-        self.system_info = get_system_info()
+def check_python_version() -> Tuple[bool, str]:
+    """Check if Python version is compatible."""
+    version = sys.version_info
+    min_version = (3, 8)
 
-    def run_full_diagnosis(self) -> Dict[str, Any]:
-        """Run complete diagnosis and return results"""
-        console.print("\n🩺 ops0 Doctor - Comprehensive Health Check")
-        console.print("=" * 50)
+    if version >= min_version:
+        return True, f"Python {version.major}.{version.minor}.{version.micro}"
+    else:
+        return False, f"Python {version.major}.{version.minor}.{version.micro} (minimum required: 3.8)"
 
-        # Reset counters
-        self.checks = []
-        self.warnings = []
-        self.errors = []
 
-        # Run all diagnostic checks
-        results = {
-            "system": self._check_system_requirements(),
-            "python": self._check_python_environment(),
-            "ops0": self._check_ops0_installation(),
-            "dependencies": self._check_dependencies(),
-            "project": self._check_project_structure(),
-            "configuration": self._check_configuration(),
-            "runtime": self._check_runtime_environment(),
-            "networking": self._check_networking(),
-        }
+def check_ops0_installation() -> Tuple[bool, str]:
+    """Check if ops0 is properly installed."""
+    try:
+        version = get_version()
+        return True, f"ops0 v{version}"
+    except Exception as e:
+        return False, f"Error getting ops0 version: {str(e)}"
 
-        # Generate summary
-        results["summary"] = self._generate_summary()
 
-        # Display results
-        self._display_results(results)
+def check_storage() -> Tuple[bool, str]:
+    """Check if storage is accessible."""
+    try:
+        storage = LocalStorage()
+        test_key = "_doctor_test"
+        test_value = {"test": "data"}
 
-        return results
+        # Try write and read
+        storage.save(test_key, test_value)
+        retrieved = storage.load(test_key)
+        storage.delete(test_key)
 
-    def _check_system_requirements(self) -> Dict[str, Any]:
-        """Check system requirements and compatibility"""
-        console.print("\n🖥️  System Requirements")
-
-        checks = {
-            "platform_supported": platform.system() in ["Linux", "Darwin", "Windows"],
-            "architecture": platform.architecture()[0] in ["64bit"],
-            "python_version": sys.version_info >= (3, 9),
-            "memory_available": True,  # Would check actual memory
-            "disk_space": True,  # Would check actual disk space
-        }
-
-        # Check specific requirements
-        python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
-
-        table = Table(show_header=True, header_style="bold cyan")
-        table.add_column("Check", style="green")
-        table.add_column("Status", style="white")
-        table.add_column("Details", style="dim")
-
-        table.add_row(
-            "Platform",
-            "✅ Supported" if checks["platform_supported"] else "❌ Unsupported",
-            platform.platform()
-        )
-
-        table.add_row(
-            "Architecture",
-            "✅ 64-bit" if checks["architecture"] else "❌ 32-bit",
-            platform.architecture()[0]
-        )
-
-        table.add_row(
-            "Python Version",
-            "✅ Compatible" if checks["python_version"] else "❌ Too old",
-            f"{python_version} (required: 3.9+)"
-        )
-
-        console.print(table)
-
-        if not checks["python_version"]:
-            self.errors.append("Python 3.9+ required")
-
-        if not checks["platform_supported"]:
-            self.errors.append(f"Platform {platform.system()} not officially supported")
-
-        return checks
-
-    def _check_python_environment(self) -> Dict[str, Any]:
-        """Check Python environment and virtual environment setup"""
-        console.print("\n🐍 Python Environment")
-
-        venv_active = os.environ.get('VIRTUAL_ENV') is not None
-        pip_available = subprocess.run(["pip", "--version"], capture_output=True).returncode == 0
-
-        checks = {
-            "virtual_env": venv_active,
-            "pip_available": pip_available,
-            "python_path": sys.executable,
-            "site_packages": len(sys.path),
-        }
-
-        table = Table(show_header=True, header_style="bold cyan")
-        table.add_column("Check", style="green")
-        table.add_column("Status", style="white")
-        table.add_column("Details", style="dim")
-
-        table.add_row(
-            "Virtual Environment",
-            "✅ Active" if venv_active else "⚠️  Not active",
-            os.environ.get('VIRTUAL_ENV', 'None')
-        )
-
-        table.add_row(
-            "Package Manager",
-            "✅ Available" if pip_available else "❌ Missing",
-            "pip"
-        )
-
-        table.add_row(
-            "Python Executable",
-            "✅ Found",
-            sys.executable
-        )
-
-        console.print(table)
-
-        if not venv_active:
-            self.warnings.append("Virtual environment not active - recommended for isolation")
-
-        if not pip_available:
-            self.errors.append("pip not available")
-
-        return checks
-
-    def _check_ops0_installation(self) -> Dict[str, Any]:
-        """Check ops0 installation and import capabilities"""
-        console.print("\n📦 ops0 Installation")
-
-        checks = {
-            "ops0_importable": False,
-            "version": None,
-            "install_location": None,
-            "core_modules": {},
-        }
-
-        # Test ops0 import
-        try:
-            import ops0
-            checks["ops0_importable"] = True
-            checks["version"] = getattr(ops0, '__version__', 'Unknown')
-            checks["install_location"] = getattr(ops0, '__file__', 'Unknown')
-        except ImportError as e:
-            self.errors.append(f"Cannot import ops0: {e}")
-
-        # Test core module imports
-        core_modules = [
-            "ops0.core.decorators",
-            "ops0.core.storage",
-            "ops0.core.graph",
-            "ops0.core.executor",
-        ]
-
-        for module_name in core_modules:
-            try:
-                importlib.import_module(module_name)
-                checks["core_modules"][module_name] = True
-            except ImportError:
-                checks["core_modules"][module_name] = False
-                self.warnings.append(f"Core module {module_name} not available")
-
-        # Display results
-        table = Table(show_header=True, header_style="bold cyan")
-        table.add_column("Component", style="green")
-        table.add_column("Status", style="white")
-        table.add_column("Details", style="dim")
-
-        table.add_row(
-            "ops0 Package",
-            "✅ Installed" if checks["ops0_importable"] else "❌ Missing",
-            f"Version: {checks['version']}" if checks["version"] else "Not available"
-        )
-
-        for module, available in checks["core_modules"].items():
-            module_short = module.split('.')[-1]
-            table.add_row(
-                f"  {module_short}",
-                "✅ Available" if available else "❌ Missing",
-                module
-            )
-
-        console.print(table)
-
-        return checks
-
-    def _check_dependencies(self) -> Dict[str, Any]:
-        """Check external dependencies and tools"""
-        console.print("\n🔧 External Dependencies")
-
-        deps = check_dependencies()
-
-        # Additional dependency checks
-        optional_deps = {
-            "pandas": self._check_optional_import("pandas"),
-            "numpy": self._check_optional_import("numpy"),
-            "scikit-learn": self._check_optional_import("sklearn"),
-            "matplotlib": self._check_optional_import("matplotlib"),
-        }
-
-        table = Table(show_header=True, header_style="bold cyan")
-        table.add_column("Dependency", style="green")
-        table.add_column("Status", style="white")
-        table.add_column("Purpose", style="dim")
-
-        # Required dependencies
-        table.add_row(
-            "Docker",
-            "✅ Available" if deps["docker"] else "⚠️  Missing",
-            "Container runtime (optional for local dev)"
-        )
-
-        table.add_row(
-            "Git",
-            "✅ Available" if deps["git"] else "⚠️  Missing",
-            "Version control (recommended)"
-        )
-
-        # Optional ML dependencies
-        for dep_name, available in optional_deps.items():
-            table.add_row(
-                dep_name,
-                "✅ Available" if available else "⚠️  Not installed",
-                "ML workflows"
-            )
-
-        console.print(table)
-
-        if not deps["docker"]:
-            self.warnings.append("Docker not available - local containerization disabled")
-
-        return {**deps, **optional_deps}
-
-    def _check_optional_import(self, module_name: str) -> bool:
-        """Check if optional module can be imported"""
-        try:
-            importlib.import_module(module_name)
-            return True
-        except ImportError:
-            return False
-
-    def _check_project_structure(self) -> Dict[str, Any]:
-        """Check current project structure and ops0 setup"""
-        console.print("\n📁 Project Structure")
-
-        structure_checks = validate_project_structure()
-
-        # Additional project checks
-        current_dir = Path.cwd()
-        checks = {
-            **structure_checks,
-            "in_git_repo": (current_dir / ".git").exists(),
-            "has_requirements": (current_dir / "requirements.txt").exists(),
-            "has_readme": any((current_dir / f"README.{ext}").exists() for ext in ["md", "rst", "txt"]),
-            "config_file": self._find_config_file(current_dir),
-        }
-
-        table = Table(show_header=True, header_style="bold cyan")
-        table.add_column("Structure Check", style="green")
-        table.add_column("Status", style="white")
-        table.add_column("Path", style="dim")
-
-        structure_items = [
-            ("ops0 Directory", checks["ops0_directory"], ".ops0/"),
-            ("Storage Directory", checks["storage_directory"], ".ops0/storage/"),
-            ("Python Files", checks["python_files"], "*.py"),
-            ("Pipeline Files", checks["pipeline_files"], "*pipeline*.py"),
-            ("Git Repository", checks["in_git_repo"], ".git/"),
-            ("Requirements File", checks["has_requirements"], "requirements.txt"),
-            ("README File", checks["has_readme"], "README.*"),
-        ]
-
-        for name, exists, path in structure_items:
-            table.add_row(
-                name,
-                "✅ Found" if exists else "⚠️  Missing",
-                path
-            )
-
-        if checks["config_file"]:
-            table.add_row(
-                "Config File",
-                "✅ Found",
-                str(checks["config_file"])
-            )
-
-        console.print(table)
-
-        if not checks["ops0_directory"]:
-            self.warnings.append("No .ops0 directory - run 'ops0 init' in a new project")
-
-        return checks
-
-    def _find_config_file(self, directory: Path) -> Optional[Path]:
-        """Find ops0 configuration file"""
-        config_files = [
-            "ops0.toml",
-            "pyproject.toml",
-            "ops0.json",
-        ]
-
-        for config_file in config_files:
-            path = directory / config_file
-            if path.exists():
-                return path
-
-        return None
-
-    def _check_configuration(self) -> Dict[str, Any]:
-        """Check ops0 configuration"""
-        console.print("\n⚙️  Configuration")
-
-        checks = {
-            "config_loaded": config.config is not None,
-            "config_valid": True,
-            "environment_vars": {},
-            "config_source": getattr(config, 'config_file_path', None),
-        }
-
-        # Check environment variables
-        ops0_env_vars = {k: v for k, v in os.environ.items() if k.startswith('OPS0_')}
-        checks["environment_vars"] = ops0_env_vars
-
-        # Validate configuration
-        try:
-            checks["config_valid"] = config.validate()
-        except Exception as e:
-            checks["config_valid"] = False
-            self.warnings.append(f"Configuration validation failed: {e}")
-
-        table = Table(show_header=True, header_style="bold cyan")
-        table.add_column("Configuration", style="green")
-        table.add_column("Status", style="white")
-        table.add_column("Value", style="dim")
-
-        table.add_row(
-            "Config Loaded",
-            "✅ Yes" if checks["config_loaded"] else "❌ No",
-            str(checks["config_source"]) if checks["config_source"] else "Default"
-        )
-
-        table.add_row(
-            "Config Valid",
-            "✅ Valid" if checks["config_valid"] else "❌ Invalid",
-            "All checks passed" if checks["config_valid"] else "See warnings"
-        )
-
-        table.add_row(
-            "Environment Variables",
-            f"✅ {len(ops0_env_vars)} found",
-            ", ".join(ops0_env_vars.keys()) if ops0_env_vars else "None"
-        )
-
-        console.print(table)
-
-        return checks
-
-    def _check_runtime_environment(self) -> Dict[str, Any]:
-        """Check runtime environment and capabilities"""
-        console.print("\n🚀 Runtime Environment")
-
-        checks = {
-            "memory_limit": None,
-            "cpu_count": os.cpu_count(),
-            "storage_writable": False,
-            "network_access": True,  # Would test actual network
-        }
-
-        # Test storage writability
-        try:
-            test_path = Path(".ops0/test_write")
-            test_path.parent.mkdir(parents=True, exist_ok=True)
-            test_path.write_text("test")
-            test_path.unlink()
-            checks["storage_writable"] = True
-        except Exception:
-            self.warnings.append("Storage directory not writable")
-
-        table = Table(show_header=True, header_style="bold cyan")
-        table.add_column("Runtime Check", style="green")
-        table.add_column("Status", style="white")
-        table.add_column("Details", style="dim")
-
-        table.add_row(
-            "CPU Cores",
-            "✅ Available",
-            f"{checks['cpu_count']} cores"
-        )
-
-        table.add_row(
-            "Storage Writable",
-            "✅ Yes" if checks["storage_writable"] else "❌ No",
-            ".ops0/ directory"
-        )
-
-        table.add_row(
-            "Network Access",
-            "✅ Available" if checks["network_access"] else "❌ Limited",
-            "External APIs and repositories"
-        )
-
-        console.print(table)
-
-        return checks
-
-    def _check_networking(self) -> Dict[str, Any]:
-        """Check network connectivity for ops0 services"""
-        console.print("\n🌐 Network Connectivity")
-
-        # Test key endpoints
-        endpoints = {
-            "pypi.org": "Package installation",
-            "github.com": "Source code repositories",
-            "docker.io": "Container registry",
-        }
-
-        checks = {}
-
-        table = Table(show_header=True, header_style="bold cyan")
-        table.add_column("Endpoint", style="green")
-        table.add_column("Status", style="white")
-        table.add_column("Purpose", style="dim")
-
-        for endpoint, purpose in endpoints.items():
-            try:
-                # Simple connectivity test (would use requests in real implementation)
-                result = subprocess.run(
-                    ["ping", "-c", "1", endpoint],
-                    capture_output=True,
-                    timeout=5
-                )
-                accessible = result.returncode == 0
-            except Exception:
-                accessible = False
-
-            checks[endpoint] = accessible
-
-            table.add_row(
-                endpoint,
-                "✅ Reachable" if accessible else "❌ Unreachable",
-                purpose
-            )
-
-        console.print(table)
-
-        unreachable = [ep for ep, status in checks.items() if not status]
-        if unreachable:
-            self.warnings.append(f"Network issues detected: {', '.join(unreachable)}")
-
-        return checks
-
-    def _generate_summary(self) -> Dict[str, Any]:
-        """Generate overall health summary"""
-        total_checks = len(self.checks)
-        total_warnings = len(self.warnings)
-        total_errors = len(self.errors)
-
-        health_score = max(0, 100 - (total_errors * 20) - (total_warnings * 5))
-
-        if health_score >= 90:
-            health_status = "Excellent"
-            health_color = "green"
-        elif health_score >= 70:
-            health_status = "Good"
-            health_color = "yellow"
-        elif health_score >= 50:
-            health_status = "Fair"
-            health_color = "orange"
+        if retrieved == test_value:
+            return True, "Storage is working correctly"
         else:
-            health_status = "Poor"
-            health_color = "red"
+            return False, "Storage read/write mismatch"
+    except Exception as e:
+        return False, f"Storage error: {str(e)}"
 
-        return {
-            "health_score": health_score,
-            "health_status": health_status,
-            "health_color": health_color,
-            "total_errors": total_errors,
-            "total_warnings": total_warnings,
-            "errors": self.errors,
-            "warnings": self.warnings,
+
+def check_project_structure() -> Tuple[bool, str]:
+    """Check if current directory is an ops0 project."""
+    project_root = get_project_root()
+
+    if project_root:
+        required_dirs = ['.ops0', '.ops0/storage', '.ops0/logs']
+        missing = []
+
+        for dir_name in required_dirs:
+            if not (project_root / dir_name).exists():
+                missing.append(dir_name)
+
+        if missing:
+            return False, f"Missing directories: {', '.join(missing)}"
+        else:
+            return True, f"Project structure OK at {project_root}"
+    else:
+        return False, "Not in an ops0 project directory"
+
+
+def check_environment() -> Tuple[bool, str]:
+    """Check environment variables and configuration."""
+    try:
+        config = Config()
+
+        # Check for any critical environment variables
+        env_vars = {
+            'OPS0_ENV': os.getenv('OPS0_ENV', 'development'),
+            'OPS0_LOG_LEVEL': os.getenv('OPS0_LOG_LEVEL', 'INFO'),
         }
 
-    def _display_results(self, results: Dict[str, Any]):
-        """Display comprehensive results summary"""
-        summary = results["summary"]
+        return True, f"Environment: {env_vars['OPS0_ENV']}"
+    except Exception as e:
+        return False, f"Configuration error: {str(e)}"
 
-        # Health score panel
-        health_text = Text()
-        health_text.append("Health Score: ", style="bold")
-        health_text.append(f"{summary['health_score']}/100", style=f"bold {summary['health_color']}")
-        health_text.append(f" ({summary['health_status']})", style=summary['health_color'])
 
-        health_panel = Panel(
-            health_text,
-            title="🩺 Overall Health",
-            border_style=summary['health_color']
-        )
-        console.print("\n")
-        console.print(health_panel)
+def run_all_checks() -> Dict[str, Tuple[bool, str]]:
+    """Run all system checks."""
+    checks = {
+        "Python Version": check_python_version(),
+        "ops0 Installation": check_ops0_installation(),
+        "Dependencies": check_dependencies(),
+        "Project Structure": check_project_structure(),
+        "Storage": check_storage(),
+        "Environment": check_environment(),
+        "Docker": check_docker(),
+        "Kubernetes": check_kubernetes(),
+    }
 
-        # Issues summary
-        if summary['total_errors'] > 0:
-            console.print(f"\n❌ {summary['total_errors']} Error(s):")
-            for error in summary['errors']:
-                console.print(f"  • {error}")
+    return checks
 
-        if summary['total_warnings'] > 0:
-            console.print(f"\n⚠️  {summary['total_warnings']} Warning(s):")
-            for warning in summary['warnings']:
-                console.print(f"  • {warning}")
 
-        # Recommendations
-        recommendations = self._generate_recommendations(results)
-        if recommendations:
-            console.print("\n💡 Recommendations:")
-            for rec in recommendations:
-                console.print(f"  • {rec}")
+@doctor_app.command()
+def doctor(
+        verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed output"),
+        fix: bool = typer.Option(False, "--fix", help="Attempt to fix issues automatically")
+):
+    """
+    Run system diagnostics and check ops0 health.
 
-        if summary['health_score'] >= 90:
-            console.print("\n🎉 Your ops0 installation looks great! You're ready to build amazing ML pipelines.")
-        elif summary['total_errors'] == 0:
-            console.print("\n✅ Your ops0 installation is functional with some minor issues to address.")
-        else:
-            console.print("\n🔧 Please address the errors above before using ops0.")
+    This command checks:
+    - Python version compatibility
+    - ops0 installation
+    - Required dependencies
+    - Docker and Kubernetes availability
+    - Project structure
+    - Storage accessibility
+    """
+    console.print("\n[bold blue]🔍 Running ops0 system diagnostics...[/bold blue]\n")
 
-    def _generate_recommendations(self, results: Dict[str, Any]) -> List[str]:
-        """Generate actionable recommendations based on results"""
-        recommendations = []
+    # Run all checks
+    results = run_all_checks()
 
-        # System recommendations
-        if not results["python"]["virtual_env"]:
+    # Display results
+    table = format_status_table(results)
+    console.print(table)
+    console.print()
+
+    # Count issues
+    issues = [(name, result) for name, result in results.items() if not result[0]]
+
+    if not issues:
+        console.print(Panel(
+            "[green]✅ All systems operational![/green]\n\n"
+            "Your ops0 installation is healthy and ready to use.",
+            title="[bold green]Success[/bold green]",
+            border_style="green"
+        ))
+        return
+
+    # Show issues
+    console.print(Panel(
+        f"[yellow]⚠️  Found {len(issues)} issue(s)[/yellow]",
+        title="[bold yellow]Issues Detected[/bold yellow]",
+        border_style="yellow"
+    ))
+
+    # Detailed issue information
+    if verbose or fix:
+        console.print("\n[bold]Issue Details:[/bold]\n")
+
+        for name, (is_ok, message) in issues:
+            console.print(f"[red]✗[/red] {name}: {message}")
+
+            if fix:
+                fix_result = attempt_fix(name, message)
+                if fix_result:
+                    print_success(f"  Fixed: {fix_result}")
+                else:
+                    print_warning(f"  Could not automatically fix this issue")
+
+            console.print()
+
+    # Provide recommendations
+    show_recommendations(issues)
+
+    # Exit with error code if issues found
+    if issues and not fix:
+        sys.exit(1)
+
+
+def attempt_fix(issue_name: str, message: str) -> str:
+    """Attempt to fix common issues automatically."""
+    fixes = {
+        "Dependencies": fix_dependencies,
+        "Project Structure": fix_project_structure,
+        "Storage": fix_storage,
+    }
+
+    fix_func = fixes.get(issue_name)
+    if fix_func:
+        return fix_func(message)
+
+    return ""
+
+
+def fix_dependencies(message: str) -> str:
+    """Try to install missing dependencies."""
+    _, missing = check_dependencies()
+    if missing:
+        import subprocess
+        try:
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install"] + missing,
+                check=True
+            )
+            return f"Installed missing packages: {', '.join(missing)}"
+        except subprocess.CalledProcessError:
+            return ""
+    return ""
+
+
+def fix_project_structure(message: str) -> str:
+    """Create missing project directories."""
+    project_root = Path.cwd()
+    created = []
+
+    for dir_name in ['.ops0', '.ops0/storage', '.ops0/logs', '.ops0/registry']:
+        dir_path = project_root / dir_name
+        if not dir_path.exists():
+            dir_path.mkdir(parents=True, exist_ok=True)
+            created.append(dir_name)
+
+    if created:
+        return f"Created directories: {', '.join(created)}"
+    return ""
+
+
+def fix_storage(message: str) -> str:
+    """Try to fix storage issues."""
+    try:
+        # Ensure storage directory exists
+        storage_dir = Path.cwd() / '.ops0' / 'storage'
+        storage_dir.mkdir(parents=True, exist_ok=True)
+
+        # Test write permissions
+        test_file = storage_dir / '.test'
+        test_file.write_text("test")
+        test_file.unlink()
+
+        return "Fixed storage permissions"
+    except Exception:
+        return ""
+
+
+def show_recommendations(issues: List[Tuple[str, Tuple[bool, str]]]):
+    """Show recommendations for fixing issues."""
+    recommendations = []
+
+    for name, (_, message) in issues:
+        if name == "Docker" and "not installed" in message:
             recommendations.append(
-                "Create and activate a virtual environment: python -m venv venv && source venv/bin/activate")
-
-        if not results["dependencies"]["docker"]:
+                "• Install Docker: https://docs.docker.com/get-docker/"
+            )
+        elif name == "Docker" and "not running" in message:
             recommendations.append(
-                "Install Docker for local container development: https://docs.docker.com/get-docker/")
+                "• Start Docker Desktop or run: sudo systemctl start docker"
+            )
+        elif name == "Kubernetes" and "not installed" in message:
+            recommendations.append(
+                "• Install kubectl: https://kubernetes.io/docs/tasks/tools/"
+            )
+        elif name == "Dependencies":
+            recommendations.append(
+                "• Run: pip install -r requirements.txt"
+            )
+        elif name == "Project Structure":
+            recommendations.append(
+                "• Run: ops0 init"
+            )
 
-        # Project recommendations
-        if not results["project"]["ops0_directory"]:
-            recommendations.append("Initialize ops0 project: ops0 init my-project")
-
-        if not results["project"]["has_requirements"]:
-            recommendations.append("Create requirements.txt with your dependencies")
-
-        if not results["project"]["in_git_repo"]:
-            recommendations.append("Initialize Git repository: git init")
-
-        # Configuration recommendations
-        if not results["configuration"]["config_valid"]:
-            recommendations.append("Review and fix configuration issues: ops0 config --show")
-
-        return recommendations
+    if recommendations:
+        console.print("\n[bold]Recommendations:[/bold]")
+        for rec in recommendations:
+            console.print(rec)
 
 
-# Global doctor instance
-doctor = Ops0Doctor()
+if __name__ == "__main__":
+    doctor_app()
