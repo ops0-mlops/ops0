@@ -12,3 +12,8 @@ venv/
 .coverage
 .ops0/
 cdk.out/
+/.idea/misc.xml
+/.idea/ops0.iml
+/.idea/inspectionProfiles/profiles_settings.xml
+/.idea/vcs.xml
+/.idea/workspace.xml
