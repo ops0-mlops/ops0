@@ -1,369 +1,258 @@
-# ops0 🐍⚡
+# ops0 - Write Python, Ship Production 🚀
 
-> **Write Python. Ship Production. Forget the Infrastructure.**
+<p align="center">
+  <strong>Transform Python functions into production ML pipelines with zero configuration</strong>
+</p>
 
-[![GitHub Stars](https://img.shields.io/github/stars/ops0-mlops/ops0?style=for-the-badge)](https://github.com/ops0-mlops/ops0)
-[![Python Version](https://img.shields.io/pypi/pyversions/ops0?style=for-the-badge)](https://pypi.org/project/ops0/)
-[![License](https://img.shields.io/github/license/ops0-mlops/ops0?style=for-the-badge)](LICENSE)
+<p align="center">
+  <a href="#quick-start">Quick Start</a> •
+  <a href="#features">Features</a> •
+  <a href="#how-it-works">How it Works</a> •
+  <a href="#examples">Examples</a> •
+  <a href="#roadmap">Roadmap</a>
+</p>
 
-**ops0** is a Python-native ML pipeline orchestration framework that transforms your functions into production-ready, scalable pipelines with zero DevOps complexity.
+---
 
-## 🚀 Quick Start
+**ops0** is a Python-first MLOps framework that automatically converts your data science code into scalable, production-ready pipelines. No YAML, no Kubernetes manifests, no infrastructure headaches - just write Python and deploy.
 
-Transform any Python function into a production ML pipeline in **under 5 minutes**:
+## ✨ The ops0 Magic
 
 ```python
 import ops0
 
 @ops0.step
 def preprocess(data):
-    cleaned = data.dropna()
-    return cleaned.scaled()
-
-@ops0.step  
-def train_model(processed_data):
-    model = RandomForestClassifier()
-    model.fit(processed_data.X, processed_data.y)
-    return model
+    # Your existing Python code
+    return data.dropna()
 
 @ops0.step
-def predict(model, new_data):
-    return model.predict(new_data)
+def train(data):
+    model = RandomForestClassifier()
+    model.fit(data)
+    ops0.save_model(model, "classifier")
+    return {"accuracy": 0.95}
 
-# Deploy to production
-ops0.deploy()  # 🚀 That's it!
+@ops0.pipeline
+def ml_pipeline(input_path):
+    data = preprocess(load_data(input_path))
+    return train(data)
+
+# That's it! Deploy to production:
+ops0.deploy()
 ```
 
-**Result**: Your pipeline is live at `https://your-pipeline.ops0.xyz` with automatic scaling, monitoring, and fault tolerance.
+## 🚀 Quick Start
 
-## 🎯 Why ops0?
-
-| Traditional MLOps | ops0 |
-|---|---|
-| 📋 Write hundreds of lines of YAML | 🐍 Pure Python decorators |
-| 🧩 Manually define DAGs and dependencies | 🧠 Automatic dependency detection |
-| 🔧 Configure infrastructure, workers, queues | 📦 Invisible containerization |
-| 🤯 Learn platform-specific syntax | ⚡ If you know Python, you know ops0 |
-| ⏰ Days to deploy a simple model | 🚀 Production in 5 minutes |
-
-## 📦 Installation
+### Installation
 
 ```bash
-# Install ops0
 pip install ops0
+```
 
-# Initialize a new project
-ops0 init my-ml-pipeline
-cd my-ml-pipeline
+### Your First Pipeline
 
-# Run locally
+1. **Initialize a new project**
+```bash
+ops0 init my-ml-project
+cd my-ml-project
+```
+
+2. **Write your pipeline** (`pipeline.py`)
+```python
+import ops0
+import pandas as pd
+
+@ops0.step
+def load_data(path):
+    return pd.read_csv(path)
+
+@ops0.step
+def process(df):
+    # ops0 handles serialization between steps
+    return df.fillna(0)
+
+@ops0.step
+def train_model(df):
+    # Your ML code here
+    model = train_your_model(df)
+    ops0.save_model(model, "my_model")
+    return {"status": "success"}
+
+@ops0.pipeline
+def training_pipeline(data_path):
+    df = load_data(data_path)
+    processed = process(df)
+    return train_model(processed)
+```
+
+3. **Test locally**
+```bash
 ops0 run --local
+```
 
-# Deploy to production  
+4. **Deploy to AWS**
+```bash
 ops0 deploy
 ```
 
-## 🛠 Core Features
+## 🎯 Features
 
-### 🐍 **Pure Python Experience**
-No YAML, no configs, no new syntax. Just Python functions with decorators.
+### Zero Configuration
+- No YAML files, no JSON configs
+- Automatic dependency detection via AST analysis
+- Smart resource allocation based on your code
 
+### Production Ready
+- Automatic containerization of each step
+- Built-in error handling and retries
+- Scalable from laptop to cloud
+
+### Developer Friendly
+- Test locally with one command
+- Hot reload during development
+- Clear error messages
+
+### Cloud Native
+- Deploy to AWS Lambda + Step Functions
+- Automatic S3 storage management
+- Pay only for what you use
+
+## 🔧 How It Works
+
+1. **Code Analysis**: ops0 uses AST parsing to understand your function dependencies
+2. **DAG Construction**: Automatically builds an execution graph from your code
+3. **Containerization**: Each `@step` becomes an isolated, scalable unit
+4. **Orchestration**: Manages execution order, parallelization, and data flow
+5. **Deployment**: Generates cloud infrastructure as code (AWS CDK)
+
+## 📚 Examples
+
+### Real-time Fraud Detection
 ```python
 @ops0.step
-def my_step(input_data):
-    # Your existing Python code works unchanged
-    result = some_ml_function(input_data)
-    return result
-```
-
-### 🧠 **Automatic Orchestration**
-ops0 analyzes your function signatures to build optimal execution graphs.
-
-```python
-@ops0.step
-def step_a(data):
-    return process(data)
-
-@ops0.step
-def step_b(result_from_step_a):  # ops0 knows this depends on step_a
-    return transform(result_from_step_a)
-
-@ops0.step  
-def step_c(data_from_a, data_from_b):  # Runs in parallel automatically
-    return combine(data_from_a, data_from_b)
-```
-
-### 📦 **Transparent Storage**
-Share data between steps without thinking about serialization.
-
-```python
-@ops0.step
-def generate_features():
-    features = expensive_computation()
-    ops0.storage.save("features", features)  # Any Python object
-    
-@ops0.step
-def train():
-    features = ops0.storage.load("features")  # Automatic deserialization
-    return train_model(features)
-```
-
-### 🐳 **Invisible Infrastructure**
-Every step becomes an isolated, scalable container automatically.
-
-- **Auto-containerization**: Analyzes imports, builds optimized Docker images
-- **Smart scaling**: Each step scales independently based on load
-- **Zero config**: No Dockerfiles, no Kubernetes manifests
-
-### 📊 **Built-in Observability**
-Production-grade monitoring without setup.
-
-```python
-@ops0.step
-@ops0.monitor(alert_on_latency=">500ms")
-def critical_step(data):
-    return process(data)
-```
-
-- Real-time pipeline monitoring
-- Automatic error detection and retry
-- Performance metrics and alerts
-- Visual DAG representation
-
-## 🏃‍♂️ Examples
-
-### Fraud Detection Pipeline
-
-```python
-import ops0
-from sklearn.ensemble import IsolationForest
-
-@ops0.step
-def fetch_transactions():
-    # Your data loading logic
-    return load_from_database()
-
-@ops0.step
-def extract_features(transactions):
-    features = calculate_risk_features(transactions)
-    ops0.storage.save("features", features)
+def extract_features(transaction):
+    # Feature engineering
+    features = {
+        'amount_zscore': calculate_zscore(transaction.amount),
+        'merchant_risk': get_merchant_score(transaction.merchant_id),
+        'time_features': extract_time_features(transaction.timestamp)
+    }
     return features
 
 @ops0.step
-def detect_anomalies():
-    features = ops0.storage.load("features")
-    model = IsolationForest()
-    anomalies = model.fit_predict(features)
-    return {"anomalies": anomalies, "model": model}
+def predict_fraud(features):
+    model = ops0.load_model("fraud_detector_v2")
+    score = model.predict_proba(features)[0][1]
+    return {'fraud_probability': score}
 
 @ops0.step
-def alert_on_fraud(results):
-    if results["anomalies"].sum() > 10:
-        ops0.notify.slack("High fraud activity detected!")
-    return results
+def alert_if_suspicious(prediction):
+    if prediction['fraud_probability'] > 0.9:
+        ops0.notify.slack("🚨 High risk transaction detected!")
+        return {'alerted': True}
+    return {'alerted': False}
 
-# Deploy the entire pipeline
-ops0.deploy(name="fraud-detector")
+@ops0.pipeline
+def fraud_detection(transaction):
+    features = extract_features(transaction)
+    prediction = predict_fraud(features)
+    return alert_if_suspicious(prediction)
 ```
 
-### Real-time ML Training
-
+### Model Training Pipeline
 ```python
 @ops0.step
-@ops0.schedule("0 2 * * *")  # Run daily at 2 AM
-def retrain_model():
-    data = fetch_latest_data()
-    model = train_updated_model(data)
-    ops0.models.deploy(model, "production")  # Blue-green deployment
-    return {"model_version": model.version, "accuracy": model.score}
+def prepare_dataset(raw_data_path):
+    df = pd.read_parquet(raw_data_path)
+    # ops0 automatically handles large dataframes
+    return train_test_split(df)
 
 @ops0.step
-@ops0.trigger.on_data_change("/data/users")  # React to new data
-def update_features():
-    return recalculate_user_features()
+def train_model(X_train, y_train):
+    # ops0 detects ML libraries and allocates GPU if needed
+    model = XGBClassifier(gpu_id=0)
+    model.fit(X_train, y_train)
+    ops0.save_model(model, "xgboost_model")
+    return model
+
+@ops0.step
+def evaluate(model, X_test, y_test):
+    predictions = model.predict(X_test)
+    metrics = {
+        'accuracy': accuracy_score(y_test, predictions),
+        'f1': f1_score(y_test, predictions)
+    }
+    ops0.log_metrics(metrics)
+    return metrics
+
+@ops0.pipeline
+def training_pipeline(data_path):
+    X_train, X_test, y_train, y_test = prepare_dataset(data_path)
+    model = train_model(X_train, y_train)
+    return evaluate(model, X_test, y_test)
 ```
 
-## 🔧 Development Workflow
+## 🛠 CLI Commands
 
-### Local Development
 ```bash
-# Test your pipeline locally
-ops0 run --local
-
-# Debug specific steps
-ops0 debug --step train_model
-
-# Validate pipeline structure
-ops0 validate
+ops0 init          # Initialize a new project
+ops0 run           # Run pipeline locally
+ops0 deploy        # Deploy to cloud
+ops0 status        # Check pipeline status
+ops0 logs          # View execution logs
+ops0 rollback      # Rollback to previous version
 ```
 
-### Production Deployment
-```bash
-# Deploy to staging
-ops0 deploy --env staging
+## 🗺 Roadmap
 
-# Run tests against staging
-ops0 test --env staging
+### Phase 1: MVP (Current)
+- ✅ Core decorators (@step, @pipeline)
+- ✅ AST-based dependency analysis
+- ✅ Local execution engine
+- ✅ Basic storage abstraction
+- ✅ CLI interface
+- 🚧 AWS CDK generation
 
-# Promote to production
-ops0 promote staging production
+### Phase 2: Production Features
+- ⏳ Automatic containerization
+- ⏳ Distributed orchestration
+- ⏳ Monitoring & alerting
+- ⏳ Model registry
+- ⏳ GPU support
+- ⏳ Multi-cloud support
 
-# Monitor pipeline health
-ops0 status --follow
-```
-
-## 🎛 Configuration
-
-### Environment Variables
-```bash
-export OPS0_API_KEY="your-api-key"
-export OPS0_PROJECT="my-ml-project"
-export OPS0_ENVIRONMENT="production"
-```
-
-### Project Configuration (`ops0.toml`)
-```toml
-[project]
-name = "fraud-detector"
-version = "1.0.0"
-description = "Real-time fraud detection pipeline"
-
-[deployment]
-region = "us-west-2"
-auto_scaling = true
-max_workers = 10
-
-[monitoring]
-alerts = ["slack://fraud-team", "email://alerts@company.com"]
-retention_days = 30
-```
+### Phase 3: Ecosystem
+- ⏳ Step marketplace
+- ⏳ Native ML framework integrations
+- ⏳ VS Code extension
+- ⏳ Web dashboard
+- ⏳ A/B testing support
 
 ## 🤝 Contributing
 
-We love contributions! Check out our [Contributing Guide](CONTRIBUTING.md) to get started.
+We're building ops0 in public! Contributions are welcome:
 
-### Quick Development Setup
-
-```bash
-# Clone the repository
-git clone https://github.com/ops0-mlops/ops0.git
-cd ops0
-
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install development dependencies
-pip install -e ".[dev]"
-
-# Run tests
-pytest
-
-# Run linting
-pre-commit run --all-files
-```
-
-### Ways to Contribute
-
-- 🐛 **Bug Reports**: Found a bug? [Open an issue](https://github.com/ops0-mlops/ops0/issues/new/choose)
-- 💡 **Feature Requests**: Have an idea? [Start a discussion](https://github.com/ops0-mlops/ops0/discussions)
-- 📝 **Documentation**: Improve our docs or add examples
-- 🔧 **Code**: Fix bugs, add features, or optimize performance
-- 🎨 **Design**: Improve UX/UI of our CLI or web dashboard
-
-## 📚 Documentation
-
-- **[Getting Started](https://docs.ops0.xyz/getting-started)** - Your first pipeline in 5 minutes
-- **[API Reference](https://docs.ops0.xyz/api)** - Complete function documentation  
-- **[Examples](https://docs.ops0.xyz/examples)** - Real-world pipeline examples
-- **[Best Practices](https://docs.ops0.xyz/best-practices)** - Production deployment tips
-- **[Migration Guide](https://docs.ops0.xyz/migration)** - From Airflow, Prefect, or Kubeflow
-
-## 🏗 Architecture
-
-ops0 is built on three core principles:
-
-1. **Convention over Configuration** - Smart defaults, minimal setup
-2. **Progressive Disclosure** - Simple by default, powerful when needed  
-3. **Python-First** - If it works in Python, it works in ops0
-
-### Core Components
-
-- **🧠 AST Analyzer**: Understands your code structure and dependencies
-- **📦 Container Engine**: Builds optimized, isolated execution environments
-- **⚡ Orchestrator**: Manages execution flow and scaling
-- **💾 Storage Layer**: Handles data persistence and sharing
-- **📊 Monitor**: Tracks performance and health
-
-## 🔒 Security & Privacy
-
-- **🔐 Zero Data Access**: ops0 never accesses your training data
-- **🏠 On-Premise Option**: Deploy in your own infrastructure
-- **🛡 SOC 2 Compliant**: Enterprise-grade security standards
-- **🔍 Audit Logs**: Complete traceability of all operations
-
-## 🚀 Roadmap
-
-### Phase 1: Core Framework ✅
-- [x] Python decorators and AST analysis
-- [x] Automatic dependency detection  
-- [x] Local execution and testing
-- [x] Auto-containerization
-- [x] Basic cloud deployment
-
-### Phase 2: Production Features 🚧
-- [ ] GPU support and auto-detection
-- [ ] Native ML framework integrations (scikit-learn, PyTorch, TensorFlow)
-- [ ] Advanced monitoring and alerting
-- [ ] Pipeline versioning and rollbacks
-
-### Phase 3: Enterprise & Scale 📋
-- [ ] Multi-cloud deployment
-- [ ] Enterprise security (SSO, RBAC)
-- [ ] A/B testing for ML models
-- [ ] Cost optimization and resource management
-
-See our [Public Roadmap](https://github.com/orgs/ops0-mlops/projects/1) for detailed progress.
-
-## 📊 Benchmarks
-
-ops0 vs Traditional MLOps platforms:
-
-| Metric | Traditional | ops0 |
-|--------|-------------|------|
-| **Setup Time** | 2-4 weeks | 5 minutes |
-| **Lines of Config** | 200-500 YAML | 0 |
-| **Learning Curve** | 2-3 months | Immediate |
-| **Deployment Speed** | 30-60 minutes | 4-8 seconds |
-| **Maintenance Overhead** | High | Zero |
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
 ## 📄 License
 
-ops0 is released under the [MIT License](LICENSE). See [LICENSE](LICENSE) for details.
+MIT License - see [LICENSE](LICENSE) for details
 
-## 🙋‍♀️ Support & Community
+## 🙏 Acknowledgments
 
-- **💬 [Discord Community](https://discord.gg/ops0)** - Chat with the team and other users
-- **📧 [Mailing List](https://groups.google.com/g/ops0-users)** - Stay updated on releases
-- **🐙 [GitHub Discussions](https://github.com/ops0-mlops/ops0/discussions)** - Ask questions and share ideas
-- **🐛 [Issue Tracker](https://github.com/ops0-mlops/ops0/issues)** - Report bugs and request features
-- **📖 [Documentation](https://docs.ops0.xyz)** - Comprehensive guides and API docs
-
-## 🎯 What's Next?
-
-1. **⭐ Star this repo** to stay updated
-2. **🚀 Try the [5-minute quickstart](https://docs.ops0.xyz/quickstart)**  
-3. **💬 Join our [Discord](https://discord.gg/ops0)** to connect with the community
-4. **🤝 [Contribute](CONTRIBUTING.md)** to help shape the future of MLOps
+ops0 is inspired by the simplicity of Flask, the power of Airflow, and the developer experience of Vercel. We believe ML infrastructure should be invisible.
 
 ---
 
-<div align="center">
+<p align="center">
+  <strong>Stop configuring. Start shipping. 🚀</strong>
+</p>
 
-**Built with ❤️ by the ops0 team and contributors**
-
-[Website](https://ops0.xyz) • [Documentation](https://docs.ops0.xyz) • [Community](https://discord.gg/ops0) • [Twitter](https://twitter.com/ops0_ai)
-
-*ops0 - where Python meets Production* 🐍⚡
-
-</div>
+<p align="center">
+  Made with ❤️ by developers who were tired of YAML files
+</p>
