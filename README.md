@@ -5,11 +5,11 @@
 </p>
 
 <p align="center">
-  <a href="#quick-start">Quick Start</a> •
-  <a href="#features">Features</a> •
-  <a href="#how-it-works">How it Works</a> •
-  <a href="#examples">Examples</a> •
-  <a href="#roadmap">Roadmap</a>
+  <a href="#-quick-start">Quick Start</a> •
+  <a href="#-features">Features</a> •
+  <a href="#-how-it-works">How it Works</a> •
+  <a href="#-examples">Examples</a> •
+  <a href="#-roadmap">Roadmap</a>
 </p>
 
 ---
