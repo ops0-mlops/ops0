@@ -9,6 +9,7 @@ import json
 import tempfile
 import traceback
 import subprocess
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Callable
 from dataclasses import dataclass, field
@@ -36,19 +37,18 @@ class ExecutionContext:
     storage: Optional[StorageBackend] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
-    _current: Optional['ExecutionContext'] = None
+    _local = threading.local()
 
     @classmethod
     def current(cls) -> Optional['ExecutionContext']:
-        """Get the current execution context"""
-        return cls._current
+        return getattr(cls._local, 'context', None)
 
     def __enter__(self):
-        ExecutionContext._current = self
+        ExecutionContext._local.context = self
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        ExecutionContext._current = None
+        ExecutionContext._local.context = None
 
 
 @dataclass
@@ -69,6 +69,34 @@ class LocalExecutor:
 
     def __init__(self, storage_backend: Optional[StorageBackend] = None):
         self.storage = storage_backend or LocalStorage()
+
+    def _get_execution_order(self, dag: Dict[str, List[str]]) -> List[str]:
+        """Déterminer l'ordre d'exécution depuis le DAG"""
+        # Algorithme de tri topologique simple
+        visited = set()
+        order = []
+
+        def visit(node):
+            if node in visited:
+                return
+            visited.add(node)
+            for dep in dag.get(node, []):
+                visit(dep)
+            order.append(node)
+
+        for node in dag:
+            visit(node)
+
+        return order[::-1]  # Inverser pour avoir les dépendances en premier
+
+    def _resolve_step_args(self, step_name: str, dag: Dict[str, List[str]],
+                           results: Dict[str, StepResult]) -> tuple:
+        """Résoudre les arguments d'un step depuis les résultats précédents"""
+        args = []
+        for dep in dag.get(step_name, []):
+            if dep in results and results[dep].success:
+                args.append(results[dep].result)
+        return tuple(args)
 
     def execute_step(self, step_config, args: tuple, kwargs: dict) -> StepResult:
         """Execute a single step locally"""
@@ -116,7 +144,19 @@ class LocalExecutor:
                 storage=self.storage
         ) as ctx:
             try:
-                # For MVP, just execute the pipeline function
+                # Exécuter chaque step dans l'ordre du DAG
+                step_results = {}
+                for step_name in self._get_execution_order(dag):
+                    step_config = pipeline_config.steps.get(step_name)
+                    if step_config:
+                        # Obtenir les arguments depuis les résultats précédents
+                        step_args = self._resolve_step_args(step_name, dag, step_results)
+                        step_result = self.execute_step(step_config, step_args, {})
+                        step_results[step_name] = step_result
+                        if not step_result.success:
+                            break
+
+                # Exécuter la fonction pipeline elle-même
                 result = pipeline_config.func(*args, **kwargs)
                 results['pipeline'] = StepResult(
                     step_name=pipeline_config.name,

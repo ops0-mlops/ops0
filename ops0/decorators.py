@@ -106,6 +106,9 @@ def step(
     """
 
     def decorator(f: Callable) -> Callable:
+        if not callable(f):
+            raise TypeError(f"@ops0.step can only decorate callable objects, got {type(f)}")
+
         # Extract step name from function name if not provided
         step_name = name or f.__name__
 

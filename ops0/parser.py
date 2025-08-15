@@ -274,6 +274,27 @@ def _detect_dependencies(analysis: FunctionAnalysis) -> Dict[str, str]:
     return dependencies
 
 
+def detect_cycles(dag: Dict[str, List[str]]) -> bool:
+    """Détecter les dépendances circulaires"""
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color = {node: WHITE for node in dag}
+
+    def has_cycle(node):
+        if color[node] == GRAY:
+            return True
+        if color[node] == BLACK:
+            return False
+
+        color[node] = GRAY
+        for neighbor in dag.get(node, []):
+            if neighbor in color and has_cycle(neighbor):
+                return True
+        color[node] = BLACK
+        return False
+
+    return any(has_cycle(node) for node in dag if color[node] == WHITE)
+
+
 def build_dag(pipeline_func: callable, steps: Dict[str, Any]) -> Dict[str, List[str]]:
     """
     Build a DAG from a pipeline function by analyzing function calls and dependencies.

@@ -199,7 +199,7 @@ class PipelineStack(Stack):
         # Create state machine
         self.state_machine = sfn.StateMachine(
             self, "PipelineStateMachine",
-            state_machine_name=f"ops0-{{stage}}-{pipeline_config.name}",
+           state_machine_name=f"ops0-{stage}-{pipeline_config.name}",
             definition=definition,
             logs={{
                 "destination": logs.LogGroup(
