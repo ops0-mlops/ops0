@@ -6,19 +6,16 @@ import os
 import sys
 import click
 import json
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Optional, Dict, Any
-from datetime import datetime
 import importlib.util
 import traceback
 
-from ops0.decorators import PipelineDecorator, StepDecorator
+from ops0.decorators import PipelineDecorator
 from ops0.executor import Orchestrator, ExecutionMode
-from ops0.storage import get_storage, set_storage, LocalStorage, S3Storage
+from ops0.storage import set_storage, LocalStorage, S3Storage
 from ops0.cdk.generator import CDKGenerator
-from ops0.parser import analyze_function
 
 # Color scheme for beautiful CLI output
 COLORS = {
@@ -133,7 +130,7 @@ models/
 @click.option('--step', '-s', help='Run only a specific step')
 @click.option('--watch', '-w', is_flag=True, help='Watch for changes and auto-reload')
 @click.argument('args', nargs=-1)
-def run(local: bool, docker: bool, pipeline: Optional[str], step: Optional[str],
+def run(docker: bool, pipeline: Optional[str], step: Optional[str],
         watch: bool, args: tuple):
     """Run a pipeline locally or in containers"""
 
