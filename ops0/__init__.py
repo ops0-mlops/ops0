@@ -3,25 +3,9 @@ ops0 - Write Python, Ship Production 🚀
 
 Zero-configuration MLOps platform that transforms Python functions into 
 production-ready ML pipelines automatically.
-
-Basic usage:
-    import ops0
-
-    @ops0.step
-    def preprocess(data):
-        return data.dropna()
-
-    @ops0.pipeline
-    def my_pipeline(input_path):
-        data = load_data(input_path)
-        return preprocess(data)
-
-    # Deploy to cloud
-    ops0.deploy()
-
-For more information, see: https://docs.ops0.xyz
 """
 import sys
+import os
 
 __version__ = "0.1.0"
 __author__ = "ops0 Contributors"
@@ -51,7 +35,7 @@ from ops0.executor import ExecutionContext, ExecutionMode
 # Storage backends (for advanced usage)
 from ops0.storage import StorageBackend, LocalStorage, S3Storage, get_storage, set_storage
 
-# Parser utilities (for advanced usage)  
+# Parser utilities (for advanced usage)
 from ops0.parser import analyze_function, build_dag
 
 # All public exports
@@ -114,31 +98,23 @@ class notify:
         print(f"[PagerDuty {severity}]: {message}")
 
 
-# Convenience namespace for deployment (future feature)
-class deploy:
-    """Deployment utilities"""
+# IMPORTANT: Ne PAS exécuter deploy() au moment de l'import!
+# Créer une fonction deploy au lieu d'une instance
+def deploy(stage: str = "prod", region: str = "us-east-1"):
+    """
+    Deploy the current pipeline to cloud infrastructure.
 
-    def __init__(self, stage: str = "prod", region: str = "us-east-1"):
-        """
-        Deploy the current pipeline to cloud infrastructure.
+    Args:
+        stage: Deployment stage (dev/staging/prod)
+        region: AWS region
 
-        Args:
-            stage: Deployment stage (dev/staging/prod)
-            region: AWS region
-
-        Example:
-            ops0.deploy()  # Deploy to prod
-            ops0.deploy(stage="dev")  # Deploy to dev
-        """
-        import subprocess
-        import sys
-
-        cmd = [sys.executable, "-m", "ops0.cli", "deploy", "--stage", stage, "--region", region]
-        subprocess.run(cmd)
-
-
-# Make deploy callable directly
-deploy = deploy()
+    Example:
+        ops0.deploy()  # Deploy to prod
+        ops0.deploy(stage="dev")  # Deploy to dev
+    """
+    import subprocess
+    cmd = [sys.executable, "-m", "ops0.cli", "deploy", "--stage", stage, "--region", region]
+    subprocess.run(cmd)
 
 
 # Logging utilities
@@ -201,7 +177,6 @@ def get_execution_context() -> ExecutionContext:
 
 def is_production() -> bool:
     """Check if running in production environment"""
-    import os
     return os.environ.get("OPS0_ENV", "").lower() in ["prod", "production"]
 
 
@@ -211,7 +186,7 @@ def is_local() -> bool:
     return ctx.mode == ExecutionMode.LOCAL
 
 
-# Version check
+# Version check - MAIS seulement si on n'est pas en train d'importer
 def check_version():
     """Check for ops0 updates"""
     try:
@@ -227,36 +202,29 @@ def check_version():
         pass
 
 
-# Auto-import commonly used functions for convenience in notebooks
+# Auto-import pour notebooks - seulement si dans un notebook
 def _setup_notebook_environment():
     """Setup Jupyter notebook environment"""
     try:
         get_ipython()  # Only available in IPython/Jupyter
 
-        # Auto-imports for notebooks
-        import pandas as pd
-        import numpy as np
-
-        # Make them available globally
-        import builtins
-        builtins.pd = pd
-        builtins.np = np
-
+        # Lazy imports pour notebooks
         print("🚀 ops0 notebook environment ready!")
         print("   Available: ops0, pd (pandas), np (numpy)")
+        print("   Note: pandas and numpy will be imported when first used")
 
     except NameError:
         # Not in a notebook
         pass
 
 
-# Run setup if in notebook
-_setup_notebook_environment()
+# Ne PAS exécuter automatiquement au moment de l'import
+# Ces actions devraient être déclenchées explicitement
+if __name__ == "__main__":
+    # Seulement si le module est exécuté directement
+    _setup_notebook_environment()
 
-# Check for updates on import (can be disabled with OPS0_NO_UPDATE_CHECK=1)
-import os
-
-if not os.environ.get("OPS0_NO_UPDATE_CHECK"):
-    import threading
-
-    threading.Thread(target=check_version, daemon=True).start()
+    # Check for updates seulement si demandé
+    if not os.environ.get("OPS0_NO_UPDATE_CHECK"):
+        import threading
+        threading.Thread(target=check_version, daemon=True).start()

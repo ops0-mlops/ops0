@@ -15,25 +15,14 @@ from datetime import datetime
 # Try importing optional dependencies
 try:
     import boto3
-
     HAS_BOTO3 = True
 except ImportError:
     HAS_BOTO3 = False
 
-try:
-    import pandas as pd
-
-    HAS_PANDAS = True
-except ImportError:
-    HAS_PANDAS = False
-
-try:
-    import numpy as np
-
-    HAS_NUMPY = True
-except ImportError:
-    HAS_NUMPY = False
-
+# IMPORTANT: Ne PAS importer pandas/numpy au niveau module
+# Ils seront importés seulement si nécessaire
+HAS_PANDAS = False
+HAS_NUMPY = False
 
 class StorageBackend(ABC):
     """Abstract base class for storage backends"""
