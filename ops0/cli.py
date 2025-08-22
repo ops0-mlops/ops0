@@ -130,8 +130,7 @@ models/
 @click.option('--step', '-s', help='Run only a specific step')
 @click.option('--watch', '-w', is_flag=True, help='Watch for changes and auto-reload')
 @click.argument('args', nargs=-1)
-def run(docker: bool, pipeline: Optional[str], step: Optional[str],
-        watch: bool, args: tuple):
+def run(local, docker, pipeline, step, watch, args):
     """Run a pipeline locally or in containers"""
 
     # Determine execution mode
@@ -227,7 +226,6 @@ def run(docker: bool, pipeline: Optional[str], step: Optional[str],
         if '--debug' in sys.argv:
             traceback.print_exc()
         sys.exit(1)
-
 
 @cli.command()
 @click.option('--stage', '-s', default='prod', help='Deployment stage (dev/staging/prod)')
